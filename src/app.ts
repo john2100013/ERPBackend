@@ -29,6 +29,22 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'ERP Backend API is running',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      items: '/api/items',
+      invoices: '/api/invoices',
+      quotations: '/api/quotations'
+    }
+  });
+});
+
 // Routes
 app.use('/api', routes);
 
