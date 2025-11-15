@@ -20,6 +20,15 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Initialize database connection for serverless
+if (process.env.NODE_ENV === 'production') {
+  connectDB().then(() => {
+    console.log('✅ Database connected successfully');
+  }).catch((error) => {
+    console.error('❌ Database connection failed:', error);
+  });
+}
+
 // Routes
 app.use('/api', routes);
 
@@ -45,15 +54,21 @@ const startServer = async () => {
   }
 };
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
+// Export the app for Vercel serverless functions
+export default app;
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
+// For local development
+if (process.env.NODE_ENV !== 'production') {
+  // Handle graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    process.exit(0);
+  });
 
-startServer();
+  process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    process.exit(0);
+  });
+
+  startServer();
+}
