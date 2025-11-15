@@ -22,7 +22,8 @@ export const corsOptions = {
     const allowedOrigins = [
       process.env.FRONTEND_URL || 'http://localhost:5173',
       'http://localhost:5173',
-      'http://127.0.0.1:5173'
+      'http://127.0.0.1:5173',
+      'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Production frontend
     ];
     
     if (allowedOrigins.includes(origin)) {
