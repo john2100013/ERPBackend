@@ -129,7 +129,7 @@ router.get('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
     // Get quotation lines
     const linesResult = await pool.query(`
-      SELECT ql.*, i.item_name
+      SELECT ql.*, i.name as item_name
       FROM quotation_lines ql
       LEFT JOIN items i ON ql.item_id = i.id
       WHERE ql.quotation_id = $1
@@ -205,16 +205,18 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const vat_amount = subtotal * 0.16;
     const total_amount = subtotal + vat_amount;
 
-    // Create quotation
+    // Create quotation (add issue_date as today's date)
+    const issueDate = new Date().toISOString().split('T')[0]; // Today's date in YYYY-MM-DD format
+    
     const quotationResult = await client.query(`
       INSERT INTO quotations (
         business_id, quotation_number, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, total_amount, valid_until, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        subtotal, vat_amount, total_amount, valid_until, notes, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *
     `, [
       businessId, quotationNumber, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, valid_until, notes, userId
+      subtotal, vat_amount, total_amount, valid_until, notes, userId, issueDate
     ]);
 
     const quotation = quotationResult.rows[0];
@@ -305,19 +307,20 @@ router.post('/:id/convert-to-invoice', authenticateToken, async (req: Authentica
     const invoiceNumber = invoiceNumberResult.rows[0].invoice_number;
 
     // Create invoice from quotation
+    const issueDate = new Date().toISOString().split('T')[0]; // Today's date in YYYY-MM-DD format
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_name, customer_address, customer_pin,
         subtotal, vat_amount, total_amount, quotation_id, notes, 
-        due_date, payment_terms, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        due_date, payment_terms, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `, [
       businessId, invoiceNumber, quotation.customer_name, quotation.customer_address, 
       quotation.customer_pin, quotation.subtotal, quotation.vat_amount, quotation.total_amount,
       quotationId, quotation.notes, 
       new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-      'Net 30 Days', userId
+      'Net 30 Days', userId, issueDate
     ]);
 
     const invoice = invoiceResult.rows[0];

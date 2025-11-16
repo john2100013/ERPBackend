@@ -4,10 +4,23 @@ import { AuthService } from '../services/authService';
 export class AuthController {
   static async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      console.log('🚀 Registration attempt started');
+      console.log('🔍 Request body:', JSON.stringify(req.body, null, 2));
+      console.log('🔍 Request headers:', JSON.stringify(req.headers, null, 2));
+      
       const { email, password, first_name, last_name, business_name } = req.body;
+
+      console.log('🔍 Extracted fields:', { 
+        email, 
+        password: password ? '[HIDDEN]' : 'undefined', 
+        first_name, 
+        last_name, 
+        business_name 
+      });
 
       // Validation
       if (!email || !password || !first_name || !last_name || !business_name) {
+        console.log('❌ Validation failed - missing required fields');
         res.status(400).json({
           success: false,
           message: 'All fields are required'
@@ -34,12 +47,21 @@ export class AuthController {
         return;
       }
 
+      console.log('✅ Validation passed, calling AuthService.register');
+      
       const result = await AuthService.register({
         email: email.toLowerCase().trim(),
         password,
         first_name: first_name.trim(),
         last_name: last_name.trim(),
         business_name: business_name.trim()
+      });
+
+      console.log('✅ AuthService.register completed successfully');
+      console.log('🔍 Result:', { 
+        user: result.user ? 'User object present' : 'No user', 
+        business: result.business ? 'Business object present' : 'No business',
+        token: result.token ? 'Token present' : 'No token'
       });
 
       res.status(201).json({
@@ -52,13 +74,19 @@ export class AuthController {
         }
       });
     } catch (error: any) {
+      console.error('❌ Registration error:', error);
+      console.error('❌ Error stack:', error.stack);
+      
       if (error.message === 'Email already registered') {
+        console.log('📧 Email already registered error');
         res.status(400).json({
           success: false,
           message: error.message
         });
         return;
       }
+      
+      console.log('🔄 Passing error to next middleware');
       next(error);
     }
   }

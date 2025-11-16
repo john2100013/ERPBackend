@@ -16,8 +16,14 @@ export const limiter = rateLimit({
 // CORS configuration
 export const corsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    console.log(`🔍 CORS Debug - Incoming origin: ${origin}`);
+    console.log(`🔍 CORS Debug - FRONTEND_URL env: ${process.env.FRONTEND_URL}`);
+    
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log('✅ CORS: Allowing request with no origin');
+      return callback(null, true);
+    }
     
     const allowedOrigins = [
       process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -26,10 +32,13 @@ export const corsOptions = {
       'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Production frontend
     ];
     
+    console.log(`🔍 CORS Debug - Allowed origins:`, allowedOrigins);
+    
     if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS: Origin ${origin} is allowed`);
       callback(null, true);
     } else {
-      console.warn(`CORS blocked origin: ${origin}`);
+      console.error(`❌ CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'), false);
     }
   },
@@ -73,7 +82,10 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ): void => {
-  console.error('Error:', error);
+  console.error('🚨 Error Handler Triggered:', error);
+  console.error('🚨 Error Stack:', error.stack);
+  console.error('🚨 Request URL:', req.url);
+  console.error('🚨 Request Method:', req.method);
 
   // Default error
   let status = 500;

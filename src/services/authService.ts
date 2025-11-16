@@ -76,7 +76,13 @@ export class AuthService {
       // Generate token
       const token = this.generateToken(user.id, user.business_id, user.role);
 
-      return { user, business, token };
+      // Add is_active field to match User type
+      const userWithIsActive = {
+        ...user,
+        is_active: user.status === 'active'
+      };
+
+      return { user: userWithIsActive, business, token };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

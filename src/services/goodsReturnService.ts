@@ -329,8 +329,7 @@ export class GoodsReturnService {
       for (const line of goodsReturn.lines || []) {
         await client.query(
           `UPDATE items 
-           SET quantity = quantity + $1, 
-               stock_quantity = stock_quantity + $1,
+           SET quantity = quantity + $1,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $2 AND business_id = $3`,
           [line.quantity, line.item_id, businessId]

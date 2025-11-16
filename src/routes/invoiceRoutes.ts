@@ -129,7 +129,7 @@ router.get('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
     // Get invoice lines
     const linesResult = await pool.query(`
-      SELECT il.*, i.item_name
+      SELECT il.*, i.name as item_name
       FROM invoice_lines il
       LEFT JOIN items i ON il.item_id = i.id
       WHERE il.invoice_id = $1
@@ -175,7 +175,9 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       notes,
       due_date,
       payment_terms = 'Net 30 Days',
-      quotation_id
+      quotation_id,
+      amountPaid = 0,
+      paymentMethod
     } = req.body;
 
     // Validate required fields
@@ -183,6 +185,23 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       return res.status(400).json({
         success: false,
         message: 'Customer name and invoice lines are required'
+      });
+    }
+
+    // Validate amountPaid
+    const parsedAmountPaid = parseFloat(String(amountPaid)) || 0;
+    if (parsedAmountPaid < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount paid cannot be negative'
+      });
+    }
+
+    // If amount is paid, payment method (financial account) is mandatory
+    if (parsedAmountPaid > 0 && !paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment method is required when amount is paid'
       });
     }
 
@@ -207,18 +226,28 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const vat_amount = subtotal * 0.16;
     const total_amount = subtotal + vat_amount;
 
-    // Create invoice
+    // Determine payment status based on amount paid vs total
+    let paymentStatus = 'unpaid';
+    if (parsedAmountPaid >= total_amount) {
+      paymentStatus = 'paid';
+    } else if (parsedAmountPaid > 0) {
+      paymentStatus = 'partial';
+    }
+
+    // Create invoice with issue_date as today's date
+    const issueDate = new Date().toISOString().split('T')[0]; // Today's date in YYYY-MM-DD format
+    
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, total_amount, quotation_id, notes, due_date, 
-        payment_terms, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        subtotal, vat_amount, total_amount, amount_paid, payment_status, quotation_id, 
+        notes, due_date, payment_terms, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *
     `, [
       businessId, invoiceNumber, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, quotation_id, notes, due_date,
-      payment_terms, userId
+      subtotal, vat_amount, total_amount, parsedAmountPaid, paymentStatus, quotation_id, 
+      notes, due_date, payment_terms, userId, issueDate
     ]);
 
     const invoice = invoiceResult.rows[0];
@@ -245,6 +274,29 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
         SET quantity = quantity - $1 
         WHERE id = $2 AND business_id = $3
       `, [quantity, itemId, businessId]);
+    }
+
+    // If payment is made, update financial account balance
+    if (parsedAmountPaid > 0 && paymentMethod) {
+      const financialAccountId = parseInt(String(paymentMethod));
+      
+      // Update financial account balance (increase by amount paid)
+      await client.query(`
+        UPDATE financial_accounts 
+        SET current_balance = current_balance + $1, updated_at = NOW()
+        WHERE id = $2 AND business_id = $3
+      `, [parsedAmountPaid, financialAccountId, businessId]);
+
+      // Create a payment record for audit trail
+      await client.query(`
+        INSERT INTO invoice_payments (
+          invoice_id, financial_account_id, amount, payment_method, 
+          payment_reference, payment_date, business_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
+      `, [
+        invoice.id, financialAccountId, parsedAmountPaid, 'cash',
+        `INV-${invoiceNumber}`, businessId, userId
+      ]);
     }
 
     // If this was converted from a quotation, update quotation status

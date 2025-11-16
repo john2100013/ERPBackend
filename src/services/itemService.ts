@@ -11,17 +11,14 @@ export class ItemService {
     unit?: string;
     description?: string;
   }): Promise<Item> {
-    const { item_name, quantity, buying_price, selling_price, rate, unit, description } = itemData;
+    const { item_name, quantity, buying_price, selling_price, description } = itemData;
     
-    // Use selling_price as rate if rate not provided
-    const itemRate = rate || selling_price;
-    
-    // Calculate amount using selling price
-    const amount = quantity * selling_price;
+    // Use selling_price as price (matching database schema)
+    const itemPrice = selling_price;
 
     const result = await pool.query(
-      `INSERT INTO items (business_id, item_name, quantity, buying_price, selling_price, rate, unit, description, amount, code, unit_price, stock_quantity, uom, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6, $3, $7, true)
+      `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         businessId, 
@@ -29,15 +26,36 @@ export class ItemService {
         quantity, 
         buying_price,
         selling_price,
-        itemRate, 
-        unit || 'PCS', 
-        description || '', 
-        amount,
-        `ITEM${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}` // Generate simple item code
+        itemPrice,
+        description || '',
+        'General' // Default category
       ]
     );
 
-    return result.rows[0];
+    const row = result.rows[0];
+    
+    // Transform database result to match Item interface
+    return {
+      id: row.id,
+      business_id: row.business_id,
+      code: `ITEM${String(row.id).padStart(3, '0')}`,
+      description: row.description || '',
+      unit_price: parseFloat(row.price),
+      uom: row.category || 'PCS',
+      category: row.category,
+      stock_quantity: row.quantity,
+      is_active: true,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      // Additional fields for frontend compatibility
+      item_name: row.name,
+      rate: parseFloat(row.price),
+      unit: row.category || 'PCS',
+      quantity: row.quantity,
+      amount: row.quantity * parseFloat(row.price),
+      buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+    };
   }
 
   static async getItems(businessId: number, options: {
@@ -64,14 +82,18 @@ export class ItemService {
     // Add search filter
     if (search) {
       paramCount++;
-      whereClause += ` AND (item_name ILIKE $${paramCount} OR description ILIKE $${paramCount})`;
+      whereClause += ` AND (name ILIKE $${paramCount} OR description ILIKE $${paramCount})`;
       queryParams.push(`%${search}%`);
     }
 
-    // Validate sort column
-    const allowedSortColumns = ['item_name', 'quantity', 'rate', 'amount', 'created_at', 'updated_at'];
+    // Validate sort column (using database schema column names)
+    const allowedSortColumns = ['name', 'quantity', 'price', 'created_at', 'updated_at'];
     const validSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'created_at';
     const validSortOrder = sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+    console.log(`📦 ItemService - Getting items for business ${businessId}`);
+    console.log(`📦 ItemService - Where clause: ${whereClause}`);
+    console.log(`📦 ItemService - Query params:`, queryParams);
 
     // Get total count
     const countResult = await pool.query(
@@ -79,19 +101,50 @@ export class ItemService {
       queryParams
     );
     const total = parseInt(countResult.rows[0].count);
+    console.log(`📦 ItemService - Total items found: ${total}`);
 
     // Get items
-    const itemsResult = await pool.query(
-      `SELECT * FROM items ${whereClause}
+    const itemsQuery = `SELECT * FROM items ${whereClause}
        ORDER BY ${validSortBy} ${validSortOrder}
-       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
-      [...queryParams, limit, offset]
-    );
+       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+    
+    console.log(`📦 ItemService - Items query: ${itemsQuery}`);
+    console.log(`📦 ItemService - Items query params:`, [...queryParams, limit, offset]);
+    
+    const itemsResult = await pool.query(itemsQuery, [...queryParams, limit, offset]);
+    
+    console.log(`📦 ItemService - Items returned: ${itemsResult.rows.length}`);
+    if (itemsResult.rows.length > 0) {
+      console.log(`📦 ItemService - Sample item:`, itemsResult.rows[0]);
+    }
 
     const totalPages = Math.ceil(total / limit);
 
+    // Transform database results to match Item interface
+    const transformedItems = itemsResult.rows.map(row => ({
+      id: row.id,
+      business_id: row.business_id,
+      code: `ITEM${String(row.id).padStart(3, '0')}`, // Generate code
+      description: row.description || '',
+      unit_price: parseFloat(row.price),
+      uom: row.category || 'PCS',
+      category: row.category,
+      stock_quantity: row.quantity,
+      is_active: true, // Default to active
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      // Additional fields for frontend compatibility
+      item_name: row.name, // Map 'name' to 'item_name'
+      rate: parseFloat(row.price), // Map 'price' to 'rate'
+      unit: row.category || 'PCS',
+      quantity: row.quantity,
+      amount: row.quantity * parseFloat(row.price), // Calculate amount
+      buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+    }));
+
     return {
-      items: itemsResult.rows,
+      items: transformedItems,
       total,
       page,
       totalPages
@@ -104,7 +157,34 @@ export class ItemService {
       [itemId, businessId]
     );
 
-    return result.rows.length > 0 ? result.rows[0] : null;
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    
+    // Transform database result to match Item interface
+    return {
+      id: row.id,
+      business_id: row.business_id,
+      code: `ITEM${String(row.id).padStart(3, '0')}`,
+      description: row.description || '',
+      unit_price: parseFloat(row.price),
+      uom: row.category || 'PCS',
+      category: row.category,
+      stock_quantity: row.quantity,
+      is_active: true,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      // Additional fields for frontend compatibility
+      item_name: row.name,
+      rate: parseFloat(row.price),
+      unit: row.category || 'PCS',
+      quantity: row.quantity,
+      amount: row.quantity * parseFloat(row.price),
+      buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+    };
   }
 
   static async updateItem(businessId: number, itemId: number, updateData: {
@@ -125,55 +205,37 @@ export class ItemService {
     const values: any[] = [];
     let paramCount = 0;
 
-    // Build dynamic update query
+    // Map frontend field names to database column names
+    const fieldMapping: { [key: string]: string } = {
+      'item_name': 'name',
+      'quantity': 'quantity',
+      'buying_price': 'buying_price',
+      'selling_price': 'selling_price',
+      'rate': 'price', // Map rate to price column
+      'description': 'description'
+    };
+
+    // Build dynamic update query using correct column names
     Object.entries(updateData).forEach(([key, value]) => {
-      if (value !== undefined) {
+      if (value !== undefined && fieldMapping[key]) {
         paramCount++;
-        updates.push(`${key} = $${paramCount}`);
+        updates.push(`${fieldMapping[key]} = $${paramCount}`);
         values.push(value);
       }
     });
 
-    if (updates.length === 0) {
-      return existingItem;
+    // Update price column with selling_price if selling_price is provided
+    if (updateData.selling_price !== undefined && !updateData.rate) {
+      const priceIndex = updates.findIndex(update => update.startsWith('price ='));
+      if (priceIndex === -1) {
+        paramCount++;
+        updates.push(`price = $${paramCount}`);
+        values.push(updateData.selling_price);
+      }
     }
 
-    // If quantity, selling_price, or rate is being updated, recalculate amount and sync with old columns
-    if (updateData.quantity !== undefined || updateData.selling_price !== undefined || updateData.rate !== undefined) {
-      const newQuantity = updateData.quantity !== undefined ? updateData.quantity : (existingItem.quantity || existingItem.stock_quantity);
-      const newSellingPrice = updateData.selling_price !== undefined ? updateData.selling_price : existingItem.selling_price;
-      const newRate = updateData.rate !== undefined ? updateData.rate : newSellingPrice; // Use selling_price as rate if not provided
-      
-      // Update amount using selling price
-      paramCount++;
-      updates.push(`amount = $${paramCount}`);
-      values.push(newQuantity * newSellingPrice);
-      
-      // Sync rate with selling price if rate not explicitly provided
-      if (updateData.selling_price !== undefined && updateData.rate === undefined) {
-        paramCount++;
-        updates.push(`rate = $${paramCount}`);
-        values.push(newSellingPrice);
-      }
-      
-      // Sync with old columns
-      if (updateData.quantity !== undefined) {
-        paramCount++;
-        updates.push(`stock_quantity = $${paramCount}`);
-        values.push(updateData.quantity);
-      }
-      
-      if (updateData.rate !== undefined || updateData.selling_price !== undefined) {
-        paramCount++;
-        updates.push(`unit_price = $${paramCount}`);
-        values.push(newRate);
-      }
-      
-      if (updateData.unit !== undefined) {
-        paramCount++;
-        updates.push(`uom = $${paramCount}`);
-        values.push(updateData.unit);
-      }
+    if (updates.length === 0) {
+      return existingItem;
     }
 
     // Add updated_at
@@ -194,7 +256,30 @@ export class ItemService {
       values
     );
 
-    return result.rows[0];
+    const row = result.rows[0];
+    
+    // Transform database result to match Item interface
+    return {
+      id: row.id,
+      business_id: row.business_id,
+      code: `ITEM${String(row.id).padStart(3, '0')}`,
+      description: row.description || '',
+      unit_price: parseFloat(row.price),
+      uom: row.category || 'PCS',
+      category: row.category,
+      stock_quantity: row.quantity,
+      is_active: true,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      // Additional fields for frontend compatibility
+      item_name: row.name,
+      rate: parseFloat(row.price),
+      unit: row.category || 'PCS',
+      quantity: row.quantity,
+      amount: row.quantity * parseFloat(row.price),
+      buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+    };
   }
 
   static async deleteItem(businessId: number, itemId: number): Promise<boolean> {
@@ -232,7 +317,7 @@ export class ItemService {
     const result = await pool.query(
       `SELECT 
          COUNT(*) as total_items,
-         COALESCE(SUM(amount), 0) as total_value,
+         COALESCE(SUM(price * quantity), 0) as total_value,
          COUNT(CASE WHEN quantity < 10 THEN 1 END) as low_stock_items
        FROM items 
        WHERE business_id = $1`,

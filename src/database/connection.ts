@@ -3,8 +3,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Use connection string for Neon in production, individual params for local development
-const connectionConfig = process.env.NODE_ENV === 'production' && process.env.DB_HOST?.includes('neon.tech') 
+// Use connection string for Neon (both production and development)
+const connectionConfig = process.env.DB_HOST?.includes('neon.tech') 
   ? {
       connectionString: `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}/${process.env.DB_NAME}?sslmode=require`,
       ssl: { rejectUnauthorized: false },

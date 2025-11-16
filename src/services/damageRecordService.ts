@@ -319,7 +319,7 @@ export class DamageRecordService {
       for (const line of damageRecord.lines || []) {
         // Check if we have enough stock
         const stockCheck = await client.query(
-          'SELECT quantity, stock_quantity FROM items WHERE id = $1 AND business_id = $2',
+          'SELECT quantity FROM items WHERE id = $1 AND business_id = $2',
           [line.item_id, businessId]
         );
 
@@ -327,7 +327,7 @@ export class DamageRecordService {
           throw new Error(`Item with ID ${line.item_id} not found`);
         }
 
-        const currentStock = stockCheck.rows[0].quantity || stockCheck.rows[0].stock_quantity || 0;
+        const currentStock = stockCheck.rows[0].quantity || 0;
         if (currentStock < line.quantity) {
           throw new Error(`Insufficient stock for item ${line.description}. Available: ${currentStock}, Required: ${line.quantity}`);
         }
@@ -335,8 +335,7 @@ export class DamageRecordService {
         // Reduce stock quantities
         await client.query(
           `UPDATE items 
-           SET quantity = quantity - $1, 
-               stock_quantity = stock_quantity - $1,
+           SET quantity = quantity - $1,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $2 AND business_id = $3`,
           [line.quantity, line.item_id, businessId]

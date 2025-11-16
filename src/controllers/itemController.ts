@@ -47,6 +47,8 @@ export class ItemController {
   static async getItems(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
+      console.log(`📦 Getting items for business ID: ${businessId}`);
+      
       const {
         page = '1',
         limit = '20',
@@ -54,6 +56,8 @@ export class ItemController {
         sortBy = 'created_at',
         sortOrder = 'DESC'
       } = req.query;
+
+      console.log(`📦 Query params: page=${page}, limit=${limit}, search=${search}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
 
       const result = await ItemService.getItems(businessId, {
         page: parseInt(page as string),
@@ -63,11 +67,23 @@ export class ItemController {
         sortOrder: (sortOrder as string).toUpperCase() as 'ASC' | 'DESC'
       });
 
+      console.log(`📦 Items result:`, {
+        totalItems: result.total,
+        itemsCount: result.items.length,
+        page: result.page,
+        totalPages: result.totalPages
+      });
+      
+      if (result.items.length > 0) {
+        console.log(`📦 Sample item:`, result.items[0]);
+      }
+
       res.json({
         success: true,
         data: result
       });
     } catch (error) {
+      console.error(`📦 Error getting items:`, error);
       next(error);
     }
   }
