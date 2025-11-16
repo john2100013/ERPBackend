@@ -5,6 +5,61 @@ import { Invoice, InvoiceLine } from '../types';
 
 const router = express.Router();
 
+// Get next invoice number
+router.get('/next-invoice-number', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    // Get business details for prefix
+    const businessResult = await pool.query('SELECT name FROM businesses WHERE id = $1', [businessId]);
+    if (businessResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Business not found'
+      });
+    }
+
+    const businessName = businessResult.rows[0].name || 'BUS';
+    const businessPrefix = businessName.substring(0, 3).toUpperCase();
+    
+    console.log('Generating invoice number for business:', businessName, 'Prefix:', businessPrefix);
+    
+    // Generate the next invoice number using the database function
+    const invoiceNumberResult = await pool.query(
+      'SELECT generate_invoice_number($1) as invoice_number',
+      [businessPrefix]
+    );
+
+    if (!invoiceNumberResult.rows || invoiceNumberResult.rows.length === 0) {
+      throw new Error('No invoice number generated');
+    }
+
+    const invoiceNumber = invoiceNumberResult.rows[0].invoice_number;
+    console.log('Generated invoice number:', invoiceNumber);
+
+    res.json({
+      success: true,
+      data: {
+        invoiceNumber
+      }
+    });
+  } catch (error) {
+    console.error('Error generating invoice number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate invoice number',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Get all invoices for authenticated user's business
 router.get('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {

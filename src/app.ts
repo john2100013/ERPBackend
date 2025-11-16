@@ -74,7 +74,12 @@ app.get('/', (req, res) => {
       auth: '/api/auth',
       items: '/api/items',
       invoices: '/api/invoices',
-      quotations: '/api/quotations'
+      quotations: '/api/quotations',
+      'business-settings': '/api/business-settings',
+      'financial-accounts': '/api/financial-accounts',
+      'goods-returns': '/api/goods-returns',
+      'damage-records': '/api/damage-records',
+      analytics: '/api/analytics'
     }
   });
 });
