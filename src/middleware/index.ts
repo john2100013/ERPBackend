@@ -29,8 +29,9 @@ export const corsOptions = {
       process.env.FRONTEND_URL || 'http://localhost:5173',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
-      'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Production frontend
-    ];
+      'https://frontend-ruby-theta-36.vercel.app', // Current production frontend
+      'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Old/backup frontend
+    ].filter(Boolean); // Remove any undefined/null values
     
     console.log(`🔍 CORS Debug - Allowed origins:`, allowedOrigins);
     

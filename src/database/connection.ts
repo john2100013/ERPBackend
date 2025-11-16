@@ -3,10 +3,10 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Use connection string for Neon (both production and development)
-const connectionConfig = process.env.DB_HOST?.includes('neon.tech') 
+// Use DATABASE_URL if available (for Neon cloud), otherwise use individual config
+const connectionConfig = process.env.DATABASE_URL
   ? {
-      connectionString: `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}/${process.env.DB_NAME}?sslmode=require`,
+      connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
       max: 20,
       idleTimeoutMillis: 30000,
