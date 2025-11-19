@@ -27,7 +27,7 @@ router.get('/next-invoice-number', authenticateToken, async (req: AuthenticatedR
     }
 
     const businessName = businessResult.rows[0].name || 'BUS';
-    const businessPrefix = businessName.substring(0, 3).toUpperCase();
+    const businessPrefix = 'IV-JM-';
     
     console.log('Generating invoice number for business:', businessName, 'Prefix:', businessPrefix);
     
@@ -223,6 +223,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     }
 
     const {
+      customer_id,
       customer_name,
       customer_address,
       customer_pin,
@@ -230,6 +231,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       notes,
       due_date,
       payment_terms = 'Net 30 Days',
+      payment_method = 'Cash',
+      mpesa_code,
       quotation_id,
       amountPaid = 0,
       paymentMethod
@@ -294,15 +297,15 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
-        business_id, invoice_number, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, total_amount, amount_paid, payment_status, quotation_id, 
-        notes, due_date, payment_terms, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        business_id, invoice_number, customer_id, customer_name, customer_address, customer_pin,
+        subtotal, vat_amount, total_amount, amount_paid, payment_status, payment_method, mpesa_code,
+        quotation_id, notes, due_date, payment_terms, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       RETURNING *
     `, [
-      businessId, invoiceNumber, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, parsedAmountPaid, paymentStatus, quotation_id, 
-      notes, due_date, payment_terms, userId, issueDate
+      businessId, invoiceNumber, customer_id || null, customer_name, customer_address, customer_pin,
+      subtotal, vat_amount, total_amount, parsedAmountPaid, paymentStatus, payment_method || 'Cash', 
+      mpesa_code || null, quotation_id, notes, due_date, payment_terms, userId, issueDate
     ]);
 
     const invoice = invoiceResult.rows[0];

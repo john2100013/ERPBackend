@@ -216,4 +216,54 @@ export class FinancialAccountController {
       next(error);
     }
   }
+
+  static async updateAccountBalance(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const accountId = parseInt(req.params.id);
+      const { amount, operation } = req.body;
+
+      if (isNaN(accountId)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid account ID'
+        });
+        return;
+      }
+
+      if (!amount || isNaN(amount)) {
+        res.status(400).json({
+          success: false,
+          message: 'Valid amount is required'
+        });
+        return;
+      }
+
+      if (!operation || !['add', 'subtract'].includes(operation)) {
+        res.status(400).json({
+          success: false,
+          message: 'Operation must be "add" or "subtract"'
+        });
+        return;
+      }
+
+      const account = await FinancialAccountService.updateAccountBalance(accountId, parseFloat(amount), operation);
+
+      if (!account) {
+        res.status(404).json({
+          success: false,
+          message: 'Financial account not found'
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Account balance updated successfully',
+        data: { account }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }

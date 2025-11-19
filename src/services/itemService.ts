@@ -11,7 +11,7 @@ export class ItemService {
     unit?: string;
     description?: string;
   }): Promise<Item> {
-    const { item_name, quantity, buying_price, selling_price, description } = itemData;
+    const { item_name, quantity, buying_price, selling_price, unit, description } = itemData;
     
     // Use selling_price as price (matching database schema)
     const itemPrice = selling_price;
@@ -28,7 +28,7 @@ export class ItemService {
         selling_price,
         itemPrice,
         description || '',
-        'General' // Default category
+        unit || 'PCS' // Use the unit provided by user, or default to 'PCS'
       ]
     );
 

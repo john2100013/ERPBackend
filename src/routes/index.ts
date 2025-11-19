@@ -4,10 +4,12 @@ import itemRoutes from './itemRoutes';
 import businessSettingsRoutes from './businessSettings';
 import invoiceRoutes from './invoiceRoutes';
 import quotationRoutes from './quotationRoutes';
+import customerRoutes from './customerRoutes';
 import financialAccountRoutes from './financialAccountRoutes';
 import goodsReturnRoutes from './goodsReturnRoutes';
 import damageRecordRoutes from './damageRecordRoutes';
 import analyticsRoutes from './analyticsRoutes';
+import serviceBillingRoutes from './serviceBillingRoutes';
 import { pool } from '../database/connection';
 
 const router = Router();
@@ -17,10 +19,12 @@ router.use('/auth', authRoutes);
 router.use('/items', itemRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/quotations', quotationRoutes);
+router.use('/customers', customerRoutes);
 router.use('/financial-accounts', financialAccountRoutes);
 router.use('/goods-returns', goodsReturnRoutes);
 router.use('/damage-records', damageRecordRoutes);
 router.use('/analytics', analyticsRoutes(pool));
+router.use('/service-billing', serviceBillingRoutes);
 router.use('/', businessSettingsRoutes);
 
 // Health check endpoint

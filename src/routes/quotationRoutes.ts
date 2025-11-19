@@ -171,6 +171,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       customer_name,
       customer_address,
       customer_pin,
+      payment_method,
+      mpesa_code,
       lines,
       notes,
       valid_until
@@ -189,7 +191,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     // Generate quotation number
     const businessResult = await client.query('SELECT name FROM businesses WHERE id = $1', [businessId]);
     const businessName = businessResult.rows[0]?.name || 'BUS';
-    const businessPrefix = businessName.substring(0, 3).toUpperCase();
+    const businessPrefix = 'MQ-JM-';
     
     const quotationNumberResult = await client.query(
       'SELECT generate_quotation_number($1) as quotation_number',
@@ -210,13 +212,13 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     
     const quotationResult = await client.query(`
       INSERT INTO quotations (
-        business_id, quotation_number, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, total_amount, valid_until, notes, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        business_id, quotation_number, customer_id, customer_name, customer_address, customer_pin,
+        payment_method, mpesa_code, subtotal, vat_amount, total_amount, valid_until, notes, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
-      businessId, quotationNumber, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, valid_until, notes, userId, issueDate
+      businessId, quotationNumber, customer_pin || null, customer_name, customer_address, customer_pin,
+      payment_method, mpesa_code || null, subtotal, vat_amount, total_amount, valid_until, notes, userId, issueDate
     ]);
 
     const quotation = quotationResult.rows[0];
@@ -446,6 +448,8 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       customer_name,
       customer_address,
       customer_pin,
+      payment_method,
+      mpesa_code,
       lines,
       notes,
       valid_until
@@ -496,16 +500,19 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
         customer_name = $1,
         customer_address = $2,
         customer_pin = $3,
-        subtotal = $4,
-        vat_amount = $5,
-        total_amount = $6,
-        valid_until = $7,
-        notes = $8,
+        payment_method = $4,
+        mpesa_code = $5,
+        subtotal = $6,
+        vat_amount = $7,
+        total_amount = $8,
+        valid_until = $9,
+        notes = $10,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $9 AND business_id = $10
+      WHERE id = $11 AND business_id = $12
       RETURNING *
     `, [
       customer_name, customer_address, customer_pin,
+      payment_method, mpesa_code || null,
       subtotal, vat_amount, total_amount, valid_until, notes,
       quotationId, businessId
     ]);

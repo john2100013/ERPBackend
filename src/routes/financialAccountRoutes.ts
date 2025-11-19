@@ -12,6 +12,7 @@ router.get('/', FinancialAccountController.getAccounts);
 router.post('/', FinancialAccountController.createAccount);
 router.get('/:id', FinancialAccountController.getAccountById);
 router.put('/:id', FinancialAccountController.updateAccount);
+router.patch('/:id/balance', FinancialAccountController.updateAccountBalance);
 router.delete('/:id', FinancialAccountController.deleteAccount);
 router.get('/:id/balance', FinancialAccountController.getAccountBalance);
 
