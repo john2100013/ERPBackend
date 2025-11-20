@@ -168,6 +168,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     }
 
     const {
+      customer_id,
       customer_name,
       customer_address,
       customer_pin,
@@ -205,7 +206,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       subtotal += line.quantity * line.unit_price;
     }
     const vat_amount = subtotal * 0.16;
-    const total_amount = subtotal + vat_amount;
+    const total_before_rounding = subtotal + vat_amount;
+    const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
     // Create quotation (add issue_date as today's date)
     const issueDate = new Date().toISOString().split('T')[0]; // Today's date in YYYY-MM-DD format
@@ -217,7 +219,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
-      businessId, quotationNumber, customer_pin || null, customer_name, customer_address, customer_pin,
+      businessId, quotationNumber, customer_id || null, customer_name, customer_address, customer_pin,
       payment_method, mpesa_code || null, subtotal, vat_amount, total_amount, valid_until, notes, userId, issueDate
     ]);
 
@@ -445,6 +447,7 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
     }
 
     const {
+      customer_id,
       customer_name,
       customer_address,
       customer_pin,
@@ -492,26 +495,28 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       subtotal += line.quantity * line.unit_price;
     }
     const vat_amount = subtotal * 0.16;
-    const total_amount = subtotal + vat_amount;
+    const total_before_rounding = subtotal + vat_amount;
+    const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
     // Update quotation
     const quotationResult = await client.query(`
       UPDATE quotations SET
-        customer_name = $1,
-        customer_address = $2,
-        customer_pin = $3,
-        payment_method = $4,
-        mpesa_code = $5,
-        subtotal = $6,
-        vat_amount = $7,
-        total_amount = $8,
-        valid_until = $9,
-        notes = $10,
+        customer_id = $1,
+        customer_name = $2,
+        customer_address = $3,
+        customer_pin = $4,
+        payment_method = $5,
+        mpesa_code = $6,
+        subtotal = $7,
+        vat_amount = $8,
+        total_amount = $9,
+        valid_until = $10,
+        notes = $11,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $11 AND business_id = $12
+      WHERE id = $12 AND business_id = $13
       RETURNING *
     `, [
-      customer_name, customer_address, customer_pin,
+      customer_id || null, customer_name, customer_address, customer_pin,
       payment_method, mpesa_code || null,
       subtotal, vat_amount, total_amount, valid_until, notes,
       quotationId, businessId

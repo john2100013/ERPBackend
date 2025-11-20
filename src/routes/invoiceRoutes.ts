@@ -207,6 +207,221 @@ router.get('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
   }
 });
 
+// Save invoice as draft (POS hold function)
+router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const client = await pool.connect();
+  
+  try {
+    const businessId = req.user?.business_id;
+    const userId = req.user?.id;
+
+    if (!businessId || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    const { items, total, account_id } = req.body;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Items are required'
+      });
+    }
+
+    await client.query('BEGIN');
+
+    // Calculate totals
+    let subtotal = 0;
+    for (const item of items) {
+      subtotal += item.amount;
+    }
+    const vat_amount = subtotal * 0.16;
+    const total_before_rounding = subtotal + vat_amount;
+    const total_amount = Math.round(total_before_rounding);
+
+    // Create draft invoice (without invoice number, status = 'draft')
+    const invoiceResult = await client.query(`
+      INSERT INTO invoices (
+        business_id, invoice_number, customer_name, customer_address, customer_pin,
+        due_date, payment_terms, subtotal, vat_amount, total_amount, amount_paid,
+        payment_status, status, notes, created_by, issue_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING *
+    `, [
+      businessId, 
+      'DRAFT', // Temporary invoice number for drafts
+      'Walk-in Customer', // Default customer for POS
+      '', 
+      '',
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Due date 30 days from now
+      'Cash',
+      subtotal,
+      vat_amount,
+      total_amount,
+      0, // amount_paid
+      'unpaid',
+      'draft', // status
+      account_id ? `Account: ${account_id}` : '',
+      userId,
+      new Date() // issue_date
+    ]);
+
+    const invoice = invoiceResult.rows[0];
+
+    // Create invoice lines
+    for (const item of items) {
+      await client.query(`
+        INSERT INTO invoice_lines (
+          invoice_id, item_id, quantity, unit_price, total, description, code, uom
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        invoice.id,
+        item.id || null,
+        item.quantity,
+        item.rate,
+        item.amount,
+        item.name,
+        item.code || '',
+        item.unit || 'PCS'
+      ]);
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      success: true,
+      message: 'Draft saved successfully',
+      data: {
+        ...invoice,
+        items
+      }
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error saving draft:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save draft',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Get all draft invoices
+router.get('/drafts/list', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT i.*, u.first_name, u.last_name,
+             COUNT(il.id) as line_count
+      FROM invoices i
+      LEFT JOIN users u ON i.created_by = u.id
+      LEFT JOIN invoice_lines il ON i.id = il.invoice_id
+      WHERE i.business_id = $1 AND i.status = 'draft'
+      GROUP BY i.id, u.first_name, u.last_name
+      ORDER BY i.created_at DESC
+    `, [businessId]);
+
+    res.json({
+      success: true,
+      data: {
+        invoices: result.rows
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching drafts:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch drafts'
+    });
+  }
+});
+
+// Convert draft to real invoice
+router.post('/draft/:id/convert', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const client = await pool.connect();
+  
+  try {
+    const businessId = req.user?.business_id;
+    const draftId = req.params.id;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    // Check if draft exists
+    const draftResult = await client.query(
+      'SELECT * FROM invoices WHERE id = $1 AND business_id = $2 AND status = $3',
+      [draftId, businessId, 'draft']
+    );
+
+    if (draftResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Draft not found'
+      });
+    }
+
+    await client.query('BEGIN');
+
+    // Generate invoice number
+    const businessResult = await client.query('SELECT name FROM businesses WHERE id = $1', [businessId]);
+    const businessPrefix = 'IV-JM-';
+    
+    const invoiceNumberResult = await client.query(
+      'SELECT generate_invoice_number($1) as invoice_number',
+      [businessPrefix]
+    );
+    const invoiceNumber = invoiceNumberResult.rows[0].invoice_number;
+
+    // Update draft to real invoice
+    const updateResult = await client.query(`
+      UPDATE invoices 
+      SET invoice_number = $1, 
+          status = 'unpaid',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 AND business_id = $3
+      RETURNING *
+    `, [invoiceNumber, draftId, businessId]);
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Draft converted to invoice successfully',
+      data: updateResult.rows[0]
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error converting draft:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to convert draft'
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // Create new invoice
 router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
   const client = await pool.connect();
@@ -282,8 +497,10 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       subtotal += line.quantity * line.unit_price;
     }
     const vat_amount = subtotal * 0.16;
-    const total_amount = subtotal + vat_amount;
+    const total_before_rounding = subtotal + vat_amount;
+    const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
+    // Determine payment status
     // Determine payment status based on amount paid vs total
     let paymentStatus = 'unpaid';
     if (parsedAmountPaid >= total_amount) {
