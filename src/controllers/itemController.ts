@@ -5,7 +5,7 @@ export class ItemController {
   static async createItem(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
-      const { item_name, quantity, buying_price, selling_price, rate, unit, description } = req.body;
+      const { item_name, quantity, buying_price, selling_price, rate, unit, description, category_id, manufacturing_date, expiry_date } = req.body;
 
       // Validation
       if (!item_name || quantity === undefined || buying_price === undefined || selling_price === undefined) {
@@ -31,7 +31,10 @@ export class ItemController {
         selling_price: parseFloat(selling_price),
         rate: parseFloat(rate || selling_price), // Use selling_price as rate if rate not provided
         unit: unit?.trim(),
-        description: description?.trim()
+        description: description?.trim(),
+        category_id: category_id ? parseInt(category_id) : undefined,
+        manufacturing_date: manufacturing_date || undefined,
+        expiry_date: expiry_date || undefined
       });
 
       res.status(201).json({

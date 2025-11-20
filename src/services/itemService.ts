@@ -10,15 +10,18 @@ export class ItemService {
     rate?: number;
     unit?: string;
     description?: string;
+    category_id?: number;
+    manufacturing_date?: string;
+    expiry_date?: string;
   }): Promise<Item> {
-    const { item_name, quantity, buying_price, selling_price, unit, description } = itemData;
+    const { item_name, quantity, buying_price, selling_price, unit, description, category_id, manufacturing_date, expiry_date } = itemData;
     
     // Use selling_price as price (matching database schema)
     const itemPrice = selling_price;
 
     const result = await pool.query(
-      `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, manufacturing_date, expiry_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         businessId, 
@@ -28,7 +31,10 @@ export class ItemService {
         selling_price,
         itemPrice,
         description || '',
-        unit || 'PCS' // Use the unit provided by user, or default to 'PCS'
+        unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
+        category_id || null,
+        manufacturing_date || null,
+        expiry_date || null
       ]
     );
 
