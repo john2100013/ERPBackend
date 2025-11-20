@@ -10,6 +10,7 @@ import goodsReturnRoutes from './goodsReturnRoutes';
 import damageRecordRoutes from './damageRecordRoutes';
 import analyticsRoutes from './analyticsRoutes';
 import serviceBillingRoutes from './serviceBillingRoutes';
+import itemCategoryRoutes from './itemCategoryRoutes';
 import { pool } from '../database/connection';
 
 const router = Router();
@@ -17,6 +18,7 @@ const router = Router();
 // Mount route modules
 router.use('/auth', authRoutes);
 router.use('/items', itemRoutes);
+router.use('/item-categories', itemCategoryRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/quotations', quotationRoutes);
 router.use('/customers', customerRoutes);
