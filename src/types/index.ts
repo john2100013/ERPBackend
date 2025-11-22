@@ -191,3 +191,109 @@ export interface PaginatedResponse<T> {
   limit: number;
   totalPages: number;
 }
+
+// Hospital Management Types
+export interface Patient {
+  id: number;
+  business_id: number;
+  patient_name: string;
+  national_id?: string;
+  location?: string;
+  age?: number;
+  phone_number?: string;
+  email?: string;
+  is_first_visit: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface Consultation {
+  id: number;
+  business_id: number;
+  patient_id: number;
+  consultation_number: string;
+  consultation_fee: number;
+  receipt_generated: boolean;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  created_by?: number;
+  created_at: Date;
+  updated_at: Date;
+  patient?: Patient;
+}
+
+export interface DoctorVisit {
+  id: number;
+  business_id: number;
+  consultation_id: number;
+  patient_id: number;
+  symptoms?: string;
+  blood_pressure?: string;
+  temperature?: number;
+  heart_rate?: number;
+  other_analysis?: string;
+  disease_diagnosis?: string;
+  notes?: string;
+  status: 'pending' | 'waiting_lab' | 'completed' | 'cancelled';
+  lab_test_required: boolean;
+  doctor_id?: number;
+  created_at: Date;
+  updated_at: Date;
+  patient?: Patient;
+  consultation?: Consultation;
+  lab_tests?: LabTest[];
+  prescription?: Prescription;
+}
+
+export interface LabTest {
+  id: number;
+  business_id: number;
+  doctor_visit_id: number;
+  patient_id: number;
+  test_name: string;
+  test_type?: string;
+  test_requested_at: Date;
+  test_completed_at?: Date;
+  test_result?: string;
+  test_status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  lab_technician_id?: number;
+  created_at: Date;
+  updated_at: Date;
+  patient?: Patient;
+  doctor_visit?: DoctorVisit;
+}
+
+export interface Prescription {
+  id: number;
+  business_id: number;
+  doctor_visit_id: number;
+  patient_id: number;
+  prescription_number: string;
+  status: 'pending' | 'partially_fulfilled' | 'fulfilled' | 'cancelled';
+  total_amount: number;
+  amount_paid: number;
+  pharmacy_served: boolean;
+  served_by?: number;
+  served_at?: Date;
+  created_at: Date;
+  updated_at: Date;
+  patient?: Patient;
+  doctor_visit?: DoctorVisit;
+  items?: PrescriptionItem[];
+}
+
+export interface PrescriptionItem {
+  id: number;
+  prescription_id: number;
+  item_id: number;
+  item_name: string;
+  quantity_prescribed: number;
+  quantity_available: number;
+  quantity_fulfilled: number;
+  unit_price: number;
+  total_price: number;
+  is_available: boolean;
+  is_missing: boolean;
+  created_at: Date;
+  updated_at: Date;
+  item?: Item;
+}

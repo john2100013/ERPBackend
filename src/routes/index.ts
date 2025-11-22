@@ -12,6 +12,7 @@ import analyticsRoutes from './analyticsRoutes';
 import serviceBillingRoutes from './serviceBillingRoutes';
 import itemCategoryRoutes from './itemCategoryRoutes';
 import salonRoutes from './salonRoutes';
+import hospitalRoutes from './hospitalRoutes';
 import { pool } from '../database/connection';
 
 const router = Router();
@@ -29,6 +30,7 @@ router.use('/damage-records', damageRecordRoutes);
 router.use('/analytics', analyticsRoutes(pool));
 router.use('/service-billing', serviceBillingRoutes);
 router.use('/salon', salonRoutes);
+router.use('/hospital', hospitalRoutes);
 router.use('/', businessSettingsRoutes);
 
 // Health check endpoint
