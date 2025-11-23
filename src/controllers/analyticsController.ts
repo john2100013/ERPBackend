@@ -234,63 +234,187 @@ export class AnalyticsController {
       }
       
       try {
-        // Get stock movement data
-        const movementQuery = `
-          WITH stock_movements AS (
+        // Check if stock_transactions table exists
+        const tableCheckQuery = `
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'stock_transactions'
+          );
+        `;
+        const tableExists = await client.query(tableCheckQuery);
+        const hasStockTransactions = tableExists.rows[0]?.exists || false;
+
+        let movementResult: any;
+        let summaryResult: any;
+
+        if (hasStockTransactions) {
+          // Check if stock_transactions has business_id column
+          const columnCheckQuery = `
+            SELECT EXISTS (
+              SELECT FROM information_schema.columns 
+              WHERE table_schema = 'public' 
+              AND table_name = 'stock_transactions'
+              AND column_name = 'business_id'
+            );
+          `;
+          const columnExists = await client.query(columnCheckQuery);
+          const hasBusinessId = columnExists.rows[0]?.exists || false;
+
+          // Get stock movement data from stock_transactions table
+          const movementQuery = hasBusinessId ? `
+            WITH stock_movements AS (
+              SELECT 
+                i.id,
+                i.name as item_name,
+                COALESCE(i.sku, i.code, i.item_code, '') as sku,
+                ic.name as category,
+                COALESCE(inward.quantity, 0) as inward_movement,
+                COALESCE(outward.quantity, 0) as outward_movement,
+                COALESCE(inward.quantity, 0) - COALESCE(outward.quantity, 0) as net_movement,
+                i.quantity as current_stock,
+                CASE 
+                  WHEN COALESCE(outward.quantity, 0) >= 50 THEN 'Fast'
+                  WHEN COALESCE(outward.quantity, 0) >= 20 THEN 'Medium'
+                  ELSE 'Slow'
+                END as movement_type
+              FROM items i
+              LEFT JOIN item_categories ic ON i.category_id = ic.id
+              LEFT JOIN (
+                SELECT item_id, SUM(quantity) as quantity
+                FROM stock_transactions 
+                WHERE transaction_type = 'in' 
+                  AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                  AND business_id = $1
+                GROUP BY item_id
+              ) inward ON i.id = inward.item_id
+              LEFT JOIN (
+                SELECT item_id, SUM(quantity) as quantity
+                FROM stock_transactions 
+                WHERE transaction_type = 'out' 
+                  AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                  AND business_id = $1
+                GROUP BY item_id
+              ) outward ON i.id = outward.item_id
+              WHERE i.business_id = $1
+                AND (COALESCE(inward.quantity, 0) > 0 OR COALESCE(outward.quantity, 0) > 0)
+            )
+            SELECT * FROM stock_movements
+            ORDER BY ABS(net_movement) DESC, outward_movement DESC
+            LIMIT 50
+          ` : `
+            WITH stock_movements AS (
+              SELECT 
+                i.id,
+                i.name as item_name,
+                COALESCE(i.sku, i.code, i.item_code, '') as sku,
+                ic.name as category,
+                COALESCE(inward.quantity, 0) as inward_movement,
+                COALESCE(outward.quantity, 0) as outward_movement,
+                COALESCE(inward.quantity, 0) - COALESCE(outward.quantity, 0) as net_movement,
+                i.quantity as current_stock,
+                CASE 
+                  WHEN COALESCE(outward.quantity, 0) >= 50 THEN 'Fast'
+                  WHEN COALESCE(outward.quantity, 0) >= 20 THEN 'Medium'
+                  ELSE 'Slow'
+                END as movement_type
+              FROM items i
+              LEFT JOIN item_categories ic ON i.category_id = ic.id
+              LEFT JOIN (
+                SELECT item_id, SUM(quantity) as quantity
+                FROM stock_transactions 
+                WHERE transaction_type = 'in' 
+                  AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                GROUP BY item_id
+              ) inward ON i.id = inward.item_id
+              LEFT JOIN (
+                SELECT item_id, SUM(quantity) as quantity
+                FROM stock_transactions 
+                WHERE transaction_type = 'out' 
+                  AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                GROUP BY item_id
+              ) outward ON i.id = outward.item_id
+              WHERE i.business_id = $1
+                AND (COALESCE(inward.quantity, 0) > 0 OR COALESCE(outward.quantity, 0) > 0)
+            )
+            SELECT * FROM stock_movements
+            ORDER BY ABS(net_movement) DESC, outward_movement DESC
+            LIMIT 50
+          `;
+
+          movementResult = await client.query(movementQuery, [businessId]);
+          
+          // Get summary data
+          const summaryQuery = hasBusinessId ? `
             SELECT 
-              i.id,
-              i.name as item_name,
-              i.sku,
-              ic.name as category,
-              COALESCE(inward.quantity, 0) as inward_movement,
-              COALESCE(outward.quantity, 0) as outward_movement,
-              COALESCE(inward.quantity, 0) - COALESCE(outward.quantity, 0) as net_movement,
-              i.quantity as current_stock,
-              CASE 
-                WHEN COALESCE(outward.quantity, 0) >= 50 THEN 'Fast'
-                WHEN COALESCE(outward.quantity, 0) >= 20 THEN 'Medium'
-                ELSE 'Slow'
-              END as movement_type
-            FROM items i
-            LEFT JOIN item_categories ic ON i.category_id = ic.id
-            LEFT JOIN (
-              SELECT item_id, SUM(quantity) as quantity
-              FROM stock_transactions 
-              WHERE transaction_type = 'in' 
-                AND created_at >= CURRENT_DATE - INTERVAL '3 months'
-                AND business_id = $1
-              GROUP BY item_id
-            ) inward ON i.id = inward.item_id
-            LEFT JOIN (
-              SELECT item_id, SUM(quantity) as quantity
-              FROM stock_transactions 
-              WHERE transaction_type = 'out' 
-                AND created_at >= CURRENT_DATE - INTERVAL '3 months'
-                AND business_id = $1
-              GROUP BY item_id
-            ) outward ON i.id = outward.item_id
-            WHERE i.business_id = $1
-              AND (COALESCE(inward.quantity, 0) > 0 OR COALESCE(outward.quantity, 0) > 0)
-          )
-          SELECT * FROM stock_movements
-          ORDER BY ABS(net_movement) DESC, outward_movement DESC
-          LIMIT 50
-        `;
+              COALESCE(SUM(CASE WHEN transaction_type = 'in' THEN quantity ELSE 0 END), 0) as total_inward,
+              COALESCE(SUM(CASE WHEN transaction_type = 'out' THEN quantity ELSE 0 END), 0) as total_outward,
+              COUNT(DISTINCT item_id) as active_items
+            FROM stock_transactions
+            WHERE created_at >= CURRENT_DATE - INTERVAL '3 months'
+              AND business_id = $1
+          ` : `
+            SELECT 
+              COALESCE(SUM(CASE WHEN transaction_type = 'in' THEN quantity ELSE 0 END), 0) as total_inward,
+              COALESCE(SUM(CASE WHEN transaction_type = 'out' THEN quantity ELSE 0 END), 0) as total_outward,
+              COUNT(DISTINCT item_id) as active_items
+            FROM stock_transactions
+            WHERE created_at >= CURRENT_DATE - INTERVAL '3 months'
+          `;
 
-        const movementResult = await client.query(movementQuery, [businessId]);
-        
-        // Get summary data
-        const summaryQuery = `
-          SELECT 
-            COALESCE(SUM(CASE WHEN transaction_type = 'in' THEN quantity ELSE 0 END), 0) as total_inward,
-            COALESCE(SUM(CASE WHEN transaction_type = 'out' THEN quantity ELSE 0 END), 0) as total_outward,
-            COUNT(DISTINCT item_id) as active_items
-          FROM stock_transactions
-          WHERE created_at >= CURRENT_DATE - INTERVAL '3 months'
-            AND business_id = $1
-        `;
+          summaryResult = hasBusinessId 
+            ? await client.query(summaryQuery, [businessId])
+            : await client.query(summaryQuery);
+        } else {
+          // Fallback: Use invoice_lines to estimate stock movement
+          const movementQuery = `
+            WITH stock_movements AS (
+              SELECT 
+                i.id,
+                i.name as item_name,
+                COALESCE(i.sku, i.code, i.item_code, '') as sku,
+                ic.name as category,
+                0 as inward_movement,
+                COALESCE(SUM(il.quantity), 0) as outward_movement,
+                -COALESCE(SUM(il.quantity), 0) as net_movement,
+                i.quantity as current_stock,
+                CASE 
+                  WHEN COALESCE(SUM(il.quantity), 0) >= 50 THEN 'Fast'
+                  WHEN COALESCE(SUM(il.quantity), 0) >= 20 THEN 'Medium'
+                  ELSE 'Slow'
+                END as movement_type
+              FROM items i
+              LEFT JOIN item_categories ic ON i.category_id = ic.id
+              LEFT JOIN invoice_lines il ON i.id = il.item_id
+              LEFT JOIN invoices inv ON il.invoice_id = inv.id
+              WHERE i.business_id = $1
+                AND inv.created_at >= CURRENT_DATE - INTERVAL '3 months'
+                AND inv.status IN ('paid', 'completed', 'sent')
+              GROUP BY i.id, i.name, i.sku, i.code, i.item_code, ic.name, i.quantity
+              HAVING COALESCE(SUM(il.quantity), 0) > 0
+            )
+            SELECT * FROM stock_movements
+            ORDER BY ABS(net_movement) DESC, outward_movement DESC
+            LIMIT 50
+          `;
 
-        const summaryResult = await client.query(summaryQuery, [businessId]);
+          movementResult = await client.query(movementQuery, [businessId]);
+          
+          // Get summary data from invoice_lines
+          const summaryQuery = `
+            SELECT 
+              0 as total_inward,
+              COALESCE(SUM(il.quantity), 0) as total_outward,
+              COUNT(DISTINCT il.item_id) as active_items
+            FROM invoice_lines il
+            JOIN invoices inv ON il.invoice_id = inv.id
+            WHERE inv.created_at >= CURRENT_DATE - INTERVAL '3 months'
+              AND inv.business_id = $1
+              AND inv.status IN ('paid', 'completed', 'sent')
+          `;
+
+          summaryResult = await client.query(summaryQuery, [businessId]);
+        }
         const summaryData = summaryResult.rows[0];
         
         const movements = movementResult.rows.map((row: any) => ({
@@ -343,17 +467,17 @@ export class AnalyticsController {
               i.name as item_name,
               ic.name as category,
               COALESCE(SUM(il.quantity * il.unit_price), 0) as revenue,
-              COALESCE(SUM(il.quantity * i.cost_price), 0) as cost,
-              COALESCE(SUM(il.quantity * il.unit_price) - SUM(il.quantity * i.cost_price), 0) as gross_profit,
+              COALESCE(SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0)), 0) as cost,
+              COALESCE(SUM(il.quantity * il.unit_price) - SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0)), 0) as gross_profit,
               CASE 
                 WHEN SUM(il.quantity * il.unit_price) > 0 
-                THEN ((SUM(il.quantity * il.unit_price) - SUM(il.quantity * i.cost_price)) / SUM(il.quantity * il.unit_price)) * 100
+                THEN ((SUM(il.quantity * il.unit_price) - SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0))) / SUM(il.quantity * il.unit_price)) * 100
                 ELSE 0 
               END as margin_percentage,
               SUM(il.quantity) as units_sold,
               CASE 
                 WHEN SUM(il.quantity) > 0 
-                THEN (SUM(il.quantity * il.unit_price) - SUM(il.quantity * i.cost_price)) / SUM(il.quantity)
+                THEN (SUM(il.quantity * il.unit_price) - SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0))) / SUM(il.quantity)
                 ELSE 0 
               END as profit_per_unit,
               'stable' as profit_trend
@@ -363,7 +487,7 @@ export class AnalyticsController {
             LEFT JOIN invoices inv ON il.invoice_id = inv.id
             WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
               AND inv.status IN ('paid', 'completed')
-              AND i.cost_price > 0
+              AND COALESCE(i.cost_price, i.buying_price, 0) > 0
               AND inv.business_id = $1
               AND i.business_id = $1
             GROUP BY i.id, i.name, ic.name
@@ -380,14 +504,14 @@ export class AnalyticsController {
         const summaryQuery = `
           SELECT 
             SUM(il.quantity * il.unit_price) as total_revenue,
-            SUM(il.quantity * i.cost_price) as total_cost,
-            SUM(il.quantity * il.unit_price) - SUM(il.quantity * i.cost_price) as total_gross_profit
+            SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0)) as total_cost,
+            SUM(il.quantity * il.unit_price) - SUM(il.quantity * COALESCE(i.cost_price, i.buying_price, 0)) as total_gross_profit
           FROM items i
           JOIN invoice_lines il ON i.id = il.item_id
           JOIN invoices inv ON il.invoice_id = inv.id
           WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
             AND inv.status IN ('paid', 'completed')
-            AND i.cost_price > 0
+            AND COALESCE(i.cost_price, i.buying_price, 0) > 0
             AND inv.business_id = $1
             AND i.business_id = $1
         `;
@@ -399,14 +523,14 @@ export class AnalyticsController {
         const categoryQuery = `
           SELECT 
             ic.name as category,
-            AVG(((il.quantity * il.unit_price) - (il.quantity * i.cost_price)) / NULLIF(il.quantity * il.unit_price, 0)) * 100 as avg_margin
+            AVG(((il.quantity * il.unit_price) - (il.quantity * COALESCE(i.cost_price, i.buying_price, 0))) / NULLIF(il.quantity * il.unit_price, 0)) * 100 as avg_margin
           FROM items i
           JOIN item_categories ic ON i.category_id = ic.id
           JOIN invoice_lines il ON i.id = il.item_id
           JOIN invoices inv ON il.invoice_id = inv.id
           WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
             AND inv.status IN ('paid', 'completed')
-            AND i.cost_price > 0
+            AND COALESCE(i.cost_price, i.buying_price, 0) > 0
             AND inv.business_id = $1
             AND i.business_id = $1
           GROUP BY ic.name
@@ -495,10 +619,10 @@ export class AnalyticsController {
 
         // Check for low stock items
         const lowStockQuery = `
-          SELECT id, name, quantity, reorder_level
+          SELECT id, name, quantity, COALESCE(reorder_level, 0) as reorder_level
           FROM items 
-          WHERE quantity <= reorder_level
-            AND reorder_level > 0
+          WHERE quantity <= COALESCE(reorder_level, 0)
+            AND COALESCE(reorder_level, 0) > 0
             AND business_id = $1
           ORDER BY quantity ASC
           LIMIT 10
@@ -598,7 +722,7 @@ export class AnalyticsController {
         const itemsQuery = `
           SELECT 
             COUNT(*) as total_items,
-            COUNT(CASE WHEN quantity <= min_stock_level THEN 1 END) as low_stock_items
+            COUNT(CASE WHEN quantity <= COALESCE(reorder_level, 0) AND COALESCE(reorder_level, 0) > 0 THEN 1 END) as low_stock_items
           FROM items
           WHERE business_id = $1
         `;
@@ -881,10 +1005,10 @@ export class AnalyticsController {
         const inventoryQuery = `
           SELECT 
             COUNT(*) as total_items,
-            COALESCE(SUM(quantity * cost_price), 0) as total_value,
-            COUNT(CASE WHEN quantity <= min_stock_level AND min_stock_level > 0 THEN 1 END) as low_stock_items,
+            COALESCE(SUM(quantity * COALESCE(cost_price, buying_price, 0)), 0) as total_value,
+            COUNT(CASE WHEN quantity <= COALESCE(reorder_level, 0) AND COALESCE(reorder_level, 0) > 0 THEN 1 END) as low_stock_items,
             COUNT(CASE WHEN quantity = 0 THEN 1 END) as out_of_stock_items,
-            COUNT(CASE WHEN quantity >= max_stock_level AND max_stock_level > 0 THEN 1 END) as overstock_items
+            COUNT(CASE WHEN quantity > COALESCE(reorder_level, 0) * 3 AND COALESCE(reorder_level, 0) > 0 THEN 1 END) as overstock_items
           FROM items
           WHERE business_id = $1
         `;
@@ -896,13 +1020,13 @@ export class AnalyticsController {
           SELECT 
             i.id,
             i.name as item_name,
-            i.code,
+            COALESCE(i.code, i.item_code, '') as code,
             ic.name as category,
             i.quantity as current_stock,
-            i.min_stock_level,
-            i.max_stock_level,
-            i.cost_price as unit_cost,
-            i.quantity * i.cost_price as total_value,
+            COALESCE(i.reorder_level, 0) as min_stock_level,
+            COALESCE(i.reorder_level, 0) * 3 as max_stock_level,
+            COALESCE(i.cost_price, i.buying_price, 0) as unit_cost,
+            i.quantity * COALESCE(i.cost_price, i.buying_price, 0) as total_value,
             COALESCE((
               SELECT COUNT(*)
               FROM invoice_lines il
@@ -928,9 +1052,11 @@ export class AnalyticsController {
 
         const items = itemsResult.rows.map((row: any) => {
           let status = 'in_stock';
+          const minLevel = row.min_stock_level || 0;
+          const maxLevel = row.max_stock_level || 0;
           if (row.current_stock === 0) status = 'out_of_stock';
-          else if (row.current_stock <= row.min_stock_level && row.min_stock_level > 0) status = 'low_stock';
-          else if (row.current_stock >= row.max_stock_level && row.max_stock_level > 0) status = 'overstock';
+          else if (row.current_stock <= minLevel && minLevel > 0) status = 'low_stock';
+          else if (row.current_stock >= maxLevel && maxLevel > 0) status = 'overstock';
 
           return {
             id: row.id,
