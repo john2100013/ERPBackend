@@ -36,6 +36,9 @@ router.post('/lab-tests/mark-viewed', authenticateToken, HospitalController.mark
 // Get all patients visited by doctor (with search)
 router.get('/doctor/patients', authenticateToken, HospitalController.getDoctorPatients);
 
+// Get complete patient consultation history
+router.get('/patient/history', authenticateToken, HospitalController.getPatientConsultationHistory);
+
 // ============ LAB ROUTES ============
 // Get pending lab tests
 router.get('/lab-tests/pending', authenticateToken, HospitalController.getPendingLabTests);

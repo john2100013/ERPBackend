@@ -11,56 +11,92 @@ export class ItemService {
     unit?: string;
     description?: string;
     category_id?: number;
+    reorder_level?: number;
     manufacturing_date?: string;
     expiry_date?: string;
   }): Promise<Item> {
-    const { item_name, quantity, buying_price, selling_price, unit, description, category_id, manufacturing_date, expiry_date } = itemData;
+    const { item_name, quantity, buying_price, selling_price, unit, description, category_id, reorder_level, manufacturing_date, expiry_date } = itemData;
     
     // Use selling_price as price (matching database schema)
     const itemPrice = selling_price;
 
-    const result = await pool.query(
-      `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, manufacturing_date, expiry_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING *`,
-      [
-        businessId, 
-        item_name, 
-        quantity, 
-        buying_price,
-        selling_price,
-        itemPrice,
-        description || '',
-        unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
-        category_id || null,
-        manufacturing_date || null,
-        expiry_date || null
-      ]
-    );
+    // Check if reorder_level column exists before inserting
+    const columnCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'items'
+        AND column_name = 'reorder_level'
+      );
+    `);
+    const hasReorderLevel = columnCheck.rows[0]?.exists || false;
 
-    const row = result.rows[0];
-    
+    if (hasReorderLevel) {
+      const result = await pool.query(
+        `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, reorder_level, manufacturing_date, expiry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING *`,
+        [
+          businessId, 
+          item_name, 
+          quantity, 
+          buying_price,
+          selling_price,
+          itemPrice,
+          description || '',
+          unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
+          category_id || null,
+          reorder_level || 10, // Default to 10 if not provided
+          manufacturing_date || null,
+          expiry_date || null
+        ]
+      );
+      return this.transformItem(result.rows[0]);
+    } else {
+      const result = await pool.query(
+        `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, manufacturing_date, expiry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING *`,
+        [
+          businessId, 
+          item_name, 
+          quantity, 
+          buying_price,
+          selling_price,
+          itemPrice,
+          description || '',
+          unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
+          category_id || null,
+          manufacturing_date || null,
+          expiry_date || null
+        ]
+      );
+      return this.transformItem(result.rows[0]);
+    }
+  }
+
+  static transformItem(row: any): Item {
     // Transform database result to match Item interface
     return {
       id: row.id,
       business_id: row.business_id,
       code: `ITEM${String(row.id).padStart(3, '0')}`,
       description: row.description || '',
-      unit_price: parseFloat(row.price),
+      unit_price: parseFloat(row.price || 0),
       uom: row.category || 'PCS',
       category: row.category,
-      stock_quantity: row.quantity,
+      stock_quantity: row.quantity || 0,
       is_active: true,
       created_at: row.created_at,
       updated_at: row.updated_at,
       // Additional fields for frontend compatibility
       item_name: row.name,
-      rate: parseFloat(row.price),
+      rate: parseFloat(row.price || 0),
       unit: row.category || 'PCS',
-      quantity: row.quantity,
-      amount: row.quantity * parseFloat(row.price),
+      quantity: row.quantity || 0,
+      amount: (row.quantity || 0) * parseFloat(row.price || 0),
       buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
-      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price || 0)
     };
   }
 

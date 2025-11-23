@@ -451,20 +451,32 @@ export class HospitalController {
       const businessId = req.businessId!;
       const { doctor_visit_id, all_results } = req.query;
 
+      // Use LEFT JOIN to handle cases where consultations might not exist
       let query = `
         SELECT 
-          lt.*, 
+          lt.id,
+          lt.business_id,
+          lt.doctor_visit_id,
+          lt.patient_id,
+          lt.test_name,
+          lt.test_type,
+          lt.test_requested_at,
+          lt.test_completed_at,
+          lt.test_result,
+          lt.test_status,
+          lt.lab_technician_id,
+          lt.created_at,
+          lt.updated_at,
           p.patient_name, 
           p.national_id, 
-          dv.disease_diagnosis,
-          dv.symptoms,
-          c.consultation_number,
-          c.created_at as consultation_date,
-          COALESCE(lt.doctor_viewed_at, NULL) as doctor_viewed_at
+          COALESCE(dv.disease_diagnosis, '') as disease_diagnosis,
+          COALESCE(dv.symptoms, '') as symptoms,
+          COALESCE(c.consultation_number, '') as consultation_number,
+          COALESCE(c.created_at, lt.created_at) as consultation_date
         FROM lab_tests lt
-        JOIN patients p ON lt.patient_id = p.id
-        JOIN doctor_visits dv ON lt.doctor_visit_id = dv.id
-        JOIN consultations c ON dv.consultation_id = c.id
+        INNER JOIN patients p ON lt.patient_id = p.id AND p.business_id = $1
+        LEFT JOIN doctor_visits dv ON lt.doctor_visit_id = dv.id AND dv.business_id = $1
+        LEFT JOIN consultations c ON dv.consultation_id = c.id AND c.business_id = $1
         WHERE lt.business_id = $1
       `;
       const params: any[] = [businessId];
@@ -488,8 +500,13 @@ export class HospitalController {
         success: true,
         data: { lab_tests: result.rows }
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error('Error in getLabTestResults:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch lab test results',
+        error: error.message
+      });
     }
   }
 
@@ -871,6 +888,116 @@ export class HospitalController {
       }
     } catch (error) {
       next(error);
+    }
+  }
+
+  // Get complete patient consultation history
+  static async getPatientConsultationHistory(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.businessId!;
+      const { patient_id, national_id } = req.query;
+
+      if (!patient_id && !national_id) {
+        res.status(400).json({ success: false, message: 'Patient ID or National ID is required' });
+        return;
+      }
+
+      // First, get the patient
+      let patientQuery = `SELECT * FROM patients WHERE business_id = $1`;
+      const patientParams: any[] = [businessId];
+      
+      if (patient_id) {
+        patientQuery += ` AND id = $2`;
+        patientParams.push(patient_id);
+      } else if (national_id) {
+        patientQuery += ` AND national_id = $2`;
+        patientParams.push(national_id);
+      }
+
+      const patientResult = await pool.query(patientQuery, patientParams);
+      
+      if (patientResult.rows.length === 0) {
+        res.status(404).json({ success: false, message: 'Patient not found' });
+        return;
+      }
+
+      const patient = patientResult.rows[0];
+      const foundPatientId = patient.id;
+
+      // Get all consultations for this patient
+      const consultationsResult = await pool.query(
+        `SELECT * FROM consultations 
+         WHERE patient_id = $1 AND business_id = $2 
+         ORDER BY created_at DESC`,
+        [foundPatientId, businessId]
+      );
+
+      // Get all doctor visits with their details
+      const doctorVisitsResult = await pool.query(
+        `SELECT dv.*, c.consultation_number, c.created_at as consultation_date
+         FROM doctor_visits dv
+         JOIN consultations c ON dv.consultation_id = c.id
+         WHERE dv.patient_id = $1 AND dv.business_id = $2
+         ORDER BY dv.created_at DESC`,
+        [foundPatientId, businessId]
+      );
+
+      // Get all lab tests for this patient
+      const labTestsResult = await pool.query(
+        `SELECT lt.*, dv.consultation_id, c.consultation_number
+         FROM lab_tests lt
+         LEFT JOIN doctor_visits dv ON lt.doctor_visit_id = dv.id
+         LEFT JOIN consultations c ON dv.consultation_id = c.id
+         WHERE lt.patient_id = $1 AND lt.business_id = $2
+         ORDER BY lt.test_requested_at DESC`,
+        [foundPatientId, businessId]
+      );
+
+      // Get all prescriptions for this patient
+      const prescriptionsResult = await pool.query(
+        `SELECT p.*, dv.consultation_id, c.consultation_number,
+                (SELECT json_agg(json_build_object(
+                  'id', pi.id,
+                  'item_id', pi.item_id,
+                  'item_name', i.name,
+                  'quantity_prescribed', pi.quantity_prescribed,
+                  'unit_price', pi.unit_price,
+                  'quantity_fulfilled', pi.quantity_fulfilled,
+                  'is_available', pi.is_available
+                )) FROM prescription_items pi
+                LEFT JOIN items i ON pi.item_id = i.id
+                WHERE pi.prescription_id = p.id) as items
+         FROM prescriptions p
+         LEFT JOIN doctor_visits dv ON p.doctor_visit_id = dv.id
+         LEFT JOIN consultations c ON dv.consultation_id = c.id
+         WHERE p.patient_id = $1 AND p.business_id = $2
+         ORDER BY p.created_at DESC`,
+        [foundPatientId, businessId]
+      );
+
+      // Get the most recent consultation and doctor visit
+      const latestConsultation = consultationsResult.rows[0] || null;
+      const latestDoctorVisit = doctorVisitsResult.rows[0] || null;
+
+      res.json({
+        success: true,
+        data: {
+          patient,
+          latest_consultation: latestConsultation,
+          latest_doctor_visit: latestDoctorVisit,
+          consultations: consultationsResult.rows,
+          doctor_visits: doctorVisitsResult.rows,
+          lab_tests: labTestsResult.rows,
+          prescriptions: prescriptionsResult.rows
+        }
+      });
+    } catch (error: any) {
+      console.error('Error in getPatientConsultationHistory:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch patient consultation history',
+        error: error.message
+      });
     }
   }
 

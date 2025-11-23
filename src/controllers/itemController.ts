@@ -5,7 +5,7 @@ export class ItemController {
   static async createItem(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
-      const { item_name, quantity, buying_price, selling_price, rate, unit, description, category_id, manufacturing_date, expiry_date } = req.body;
+      const { item_name, quantity, buying_price, selling_price, rate, unit, description, category_id, reorder_level, manufacturing_date, expiry_date } = req.body;
 
       // Validation
       if (!item_name || quantity === undefined || buying_price === undefined || selling_price === undefined) {
@@ -33,6 +33,7 @@ export class ItemController {
         unit: unit?.trim(),
         description: description?.trim(),
         category_id: category_id ? parseInt(category_id) : undefined,
+        reorder_level: reorder_level ? parseInt(reorder_level) : undefined,
         manufacturing_date: manufacturing_date || undefined,
         expiry_date: expiry_date || undefined
       });
