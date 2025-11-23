@@ -534,6 +534,26 @@ export class HospitalController {
         return;
       }
 
+      const labTest = result.rows[0];
+      const doctorVisitId = labTest.doctor_visit_id;
+
+      // Check if all lab tests for this doctor visit are completed
+      const allTests = await client.query(
+        `SELECT * FROM lab_tests WHERE doctor_visit_id = $1 AND business_id = $2`,
+        [doctorVisitId, businessId]
+      );
+
+      const allCompleted = allTests.rows.every((test: any) => test.test_status === 'completed');
+
+      // If all tests are completed, update doctor visit status back to 'pending' 
+      // to indicate the doctor can now review results and complete the visit
+      if (allCompleted) {
+        await client.query(
+          `UPDATE doctor_visits SET status = 'pending', updated_at = NOW() WHERE id = $1`,
+          [doctorVisitId]
+        );
+      }
+
       await client.query('COMMIT');
 
       res.json({
@@ -579,10 +599,11 @@ export class HospitalController {
   static async getPrescriptionItems(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = req.businessId!;
-      const { prescription_id } = req.query;
+      // Get prescription_id from URL path parameter (not query parameter)
+      const prescription_id = parseInt(req.params.id, 10);
 
-      if (!prescription_id) {
-        res.status(400).json({ success: false, message: 'Prescription ID is required' });
+      if (!prescription_id || isNaN(prescription_id)) {
+        res.status(400).json({ success: false, message: 'Prescription ID is required and must be a valid number' });
         return;
       }
 

@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { AuthenticatedRequest } from '../middleware/auth';
 
 export class AnalyticsController {
   private pool: Pool;
@@ -9,7 +10,7 @@ export class AnalyticsController {
   }
 
   // Customer Insights Analytics
-  async getCustomerInsights(req: Request, res: Response): Promise<void> {
+  async getCustomerInsights(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -60,7 +61,7 @@ export class AnalyticsController {
   }
 
   // Revenue Trends Analytics
-  async getRevenueTrends(req: Request, res: Response): Promise<void> {
+  async getRevenueTrends(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -147,7 +148,7 @@ export class AnalyticsController {
   }
 
   // Quotation Analysis
-  async getQuotationAnalysis(req: Request, res: Response): Promise<void> {
+  async getQuotationAnalysis(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -222,7 +223,7 @@ export class AnalyticsController {
   }
 
   // Stock Movement Analysis
-  async getStockMovement(req: Request, res: Response): Promise<void> {
+  async getStockMovement(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -313,7 +314,7 @@ export class AnalyticsController {
   }
 
   // Profitability Analysis
-  async getProfitabilityAnalysis(req: Request, res: Response): Promise<void> {
+  async getProfitabilityAnalysis(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -430,7 +431,7 @@ export class AnalyticsController {
   }
 
   // Pending Actions
-  async getPendingActions(req: Request, res: Response): Promise<void> {
+  async getPendingActions(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -531,7 +532,7 @@ export class AnalyticsController {
   }
 
   // Overview Analytics - Main dashboard metrics
-  async getOverview(req: Request, res: Response): Promise<void> {
+  async getOverview(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
       
@@ -608,6 +609,302 @@ export class AnalyticsController {
     } catch (error) {
       console.error('Error fetching overview analytics:', error);
       res.status(500).json({ error: 'Failed to fetch overview analytics' });
+    }
+  }
+
+  // Top Selling Items
+  async getTopSellingItems(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        return res.status(400).json({ error: 'Business ID is required' });
+      }
+      
+      try {
+        const dateRange = req.query.dateRange as string || 'this_month';
+        let dateFilter = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateFilter = "AND inv.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateFilter = "AND inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateFilter = "AND inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateFilter = "AND inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateFilter = "AND inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          default:
+            dateFilter = "AND inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+        }
+
+        const topItemsQuery = `
+          SELECT 
+            i.id,
+            i.name as item_name,
+            SUM(il.quantity) as quantity,
+            SUM(il.total) as sales,
+            CASE 
+              WHEN SUM(il.quantity) >= 100 THEN 'fast'
+              WHEN SUM(il.quantity) >= 50 THEN 'medium'
+              ELSE 'slow'
+            END as velocity
+          FROM items i
+          JOIN invoice_lines il ON i.id = il.item_id
+          JOIN invoices inv ON il.invoice_id = inv.id
+          WHERE inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
+            ${dateFilter}
+          GROUP BY i.id, i.name
+          HAVING SUM(il.quantity) > 0
+          ORDER BY sales DESC, quantity DESC
+          LIMIT 50
+        `;
+
+        const result = await client.query(topItemsQuery, [businessId]);
+        
+        const items = result.rows.map((row: any) => ({
+          id: row.id,
+          itemName: row.item_name,
+          sales: parseFloat(row.sales || 0),
+          quantity: parseInt(row.quantity || 0),
+          velocity: row.velocity
+        }));
+
+        res.json({ items });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching top selling items:', error);
+      res.status(500).json({ error: 'Failed to fetch top selling items' });
+    }
+  }
+
+  // Sales Performance
+  async getSalesPerformance(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        return res.status(400).json({ error: 'Business ID is required' });
+      }
+      
+      try {
+        const dateRange = req.query.dateRange as string || 'this_month';
+        let dateFilter = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          default:
+            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+        }
+
+        // Get total sales and invoices
+        const salesQuery = `
+          SELECT 
+            COUNT(*) as total_invoices,
+            COALESCE(SUM(total_amount), 0) as total_sales,
+            COALESCE(AVG(total_amount), 0) as average_order_value,
+            COALESCE(SUM(total_amount - vat_amount), 0) as gross_profit
+          FROM invoices inv
+          ${dateFilter}
+            AND inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
+        `;
+        const salesResult = await client.query(salesQuery, [businessId]);
+        const salesData = salesResult.rows[0];
+
+        // Calculate profit margin
+        const totalSales = parseFloat(salesData.total_sales || 0);
+        const grossProfit = parseFloat(salesData.gross_profit || 0);
+        const profitMargin = totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
+
+        // Get previous period for growth calculation
+        const prevDateFilter = dateFilter.replace('CURRENT_DATE', `CURRENT_DATE - INTERVAL '${dateRange === 'today' ? '1 day' : dateRange === 'this_week' ? '7 days' : dateRange === 'this_month' ? '1 month' : dateRange === 'this_quarter' ? '3 months' : '1 year'}'`);
+        const prevSalesQuery = `
+          SELECT COALESCE(SUM(total_amount), 0) as total_sales
+          FROM invoices inv
+          ${prevDateFilter}
+            AND inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
+        `;
+        const prevSalesResult = await client.query(prevSalesQuery, [businessId]);
+        const prevTotalSales = parseFloat(prevSalesResult.rows[0].total_sales || 0);
+        const salesGrowth = prevTotalSales > 0 ? ((totalSales - prevTotalSales) / prevTotalSales) * 100 : 0;
+
+        // Get daily sales
+        const dailySalesQuery = `
+          SELECT 
+            DATE(created_at) as date,
+            COUNT(*) as invoices,
+            COALESCE(SUM(total_amount), 0) as sales,
+            COALESCE(SUM(total_amount - vat_amount), 0) as profit
+          FROM invoices
+          ${dateFilter}
+            AND business_id = $1
+            AND status IN ('paid', 'completed', 'sent')
+          GROUP BY DATE(created_at)
+          ORDER BY date DESC
+          LIMIT 30
+        `;
+        const dailySalesResult = await client.query(dailySalesQuery, [businessId]);
+        
+        const dailySales = dailySalesResult.rows.map((row: any) => ({
+          date: row.date.toISOString().split('T')[0],
+          invoices: parseInt(row.invoices || 0),
+          sales: parseFloat(row.sales || 0),
+          profit: parseFloat(row.profit || 0)
+        }));
+
+        const metrics = {
+          totalSales,
+          totalInvoices: parseInt(salesData.total_invoices || 0),
+          averageOrderValue: parseFloat(salesData.average_order_value || 0),
+          targetSales: totalSales * 1.2, // 20% above current as target
+          grossProfit,
+          profitMargin: parseFloat(profitMargin.toFixed(2)),
+          salesGrowth: parseFloat(salesGrowth.toFixed(2)),
+          dailySales
+        };
+
+        res.json({ metrics });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching sales performance:', error);
+      res.status(500).json({ error: 'Failed to fetch sales performance' });
+    }
+  }
+
+  // Inventory Overview
+  async getInventoryOverview(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        return res.status(400).json({ error: 'Business ID is required' });
+      }
+      
+      try {
+        // Get inventory metrics
+        const inventoryQuery = `
+          SELECT 
+            COUNT(*) as total_items,
+            COALESCE(SUM(quantity * cost_price), 0) as total_value,
+            COUNT(CASE WHEN quantity <= min_stock_level AND min_stock_level > 0 THEN 1 END) as low_stock_items,
+            COUNT(CASE WHEN quantity = 0 THEN 1 END) as out_of_stock_items,
+            COUNT(CASE WHEN quantity >= max_stock_level AND max_stock_level > 0 THEN 1 END) as overstock_items
+          FROM items
+          WHERE business_id = $1
+        `;
+        const inventoryResult = await client.query(inventoryQuery, [businessId]);
+        const inventoryData = inventoryResult.rows[0];
+
+        // Get detailed item data
+        const itemsQuery = `
+          SELECT 
+            i.id,
+            i.name as item_name,
+            i.code,
+            ic.name as category,
+            i.quantity as current_stock,
+            i.min_stock_level,
+            i.max_stock_level,
+            i.cost_price as unit_cost,
+            i.quantity * i.cost_price as total_value,
+            COALESCE((
+              SELECT COUNT(*)
+              FROM invoice_lines il
+              JOIN invoices inv ON il.invoice_id = inv.id
+              WHERE il.item_id = i.id
+                AND inv.business_id = $1
+                AND inv.created_at >= CURRENT_DATE - INTERVAL '1 month'
+            ), 0) as turnover_rate,
+            COALESCE((
+              SELECT MAX(il.created_at)
+              FROM invoice_lines il
+              JOIN invoices inv ON il.invoice_id = inv.id
+              WHERE il.item_id = i.id
+                AND inv.business_id = $1
+            ), i.created_at) as last_restocked
+          FROM items i
+          LEFT JOIN item_categories ic ON i.category_id = ic.id
+          WHERE i.business_id = $1
+          ORDER BY i.name
+          LIMIT 100
+        `;
+        const itemsResult = await client.query(itemsQuery, [businessId]);
+
+        const items = itemsResult.rows.map((row: any) => {
+          let status = 'in_stock';
+          if (row.current_stock === 0) status = 'out_of_stock';
+          else if (row.current_stock <= row.min_stock_level && row.min_stock_level > 0) status = 'low_stock';
+          else if (row.current_stock >= row.max_stock_level && row.max_stock_level > 0) status = 'overstock';
+
+          return {
+            id: row.id,
+            itemName: row.item_name,
+            code: row.code || '',
+            category: row.category || 'Uncategorized',
+            currentStock: parseInt(row.current_stock || 0),
+            minStockLevel: parseInt(row.min_stock_level || 0),
+            maxStockLevel: parseInt(row.max_stock_level || 0),
+            unitCost: parseFloat(row.unit_cost || 0),
+            totalValue: parseFloat(row.total_value || 0),
+            status,
+            lastRestocked: row.last_restocked ? row.last_restocked.toISOString() : new Date().toISOString(),
+            turnoverRate: parseFloat(row.turnover_rate || 0)
+          };
+        });
+
+        // Calculate average turnover
+        const avgTurnover = items.length > 0 
+          ? items.reduce((sum, item) => sum + item.turnoverRate, 0) / items.length 
+          : 0;
+
+        const metrics = {
+          totalItems: parseInt(inventoryData.total_items || 0),
+          totalValue: parseFloat(inventoryData.total_value || 0),
+          lowStockItems: parseInt(inventoryData.low_stock_items || 0),
+          outOfStockItems: parseInt(inventoryData.out_of_stock_items || 0),
+          overstockItems: parseInt(inventoryData.overstock_items || 0),
+          averageTurnover: parseFloat(avgTurnover.toFixed(2)),
+          items
+        };
+
+        res.json({ metrics });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching inventory overview:', error);
+      res.status(500).json({ error: 'Failed to fetch inventory overview' });
     }
   }
 }

@@ -5,7 +5,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
 // Start a shift (clock in)
 export const startShift = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const userId = req.user?.id;
     const { starting_float } = req.body;
 
@@ -43,16 +43,17 @@ export const startShift = async (req: AuthenticatedRequest, res: Response) => {
 // Get current open shift
 export const getCurrentShift = async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const businessId = req.businessId;
     const userId = req.user?.id;
 
     const result = await pool.query(
       `SELECT s.*, u.name as user_name
        FROM salon_shifts s
        JOIN users u ON s.user_id = u.id
-       WHERE s.user_id = $1 AND s.status = 'open'
+       WHERE s.business_id = $1 AND s.user_id = $2 AND s.status = 'open'
        ORDER BY s.clock_in DESC
        LIMIT 1`,
-      [userId]
+      [businessId, userId]
     );
 
     res.json({
@@ -142,7 +143,7 @@ export const closeShift = async (req: AuthenticatedRequest, res: Response) => {
 // Get shift history
 export const getShifts = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { user_id, start_date, end_date, status } = req.query;
 
     let query = `
@@ -196,7 +197,7 @@ export const getShifts = async (req: AuthenticatedRequest, res: Response) => {
 export const getShiftDetails = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
 
     const shiftResult = await pool.query(
       `SELECT s.*, u.name as user_name, u.email

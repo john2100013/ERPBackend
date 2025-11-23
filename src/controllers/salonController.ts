@@ -5,7 +5,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
 // Get all salon users for a business
 export const getSalonUsers = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     
     const result = await pool.query(
       `SELECT su.*, u.name, u.email, u.phone_number
@@ -29,7 +29,7 @@ export const getSalonUsers = async (req: AuthenticatedRequest, res: Response) =>
 // Create salon user
 export const createSalonUser = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { user_id, role, commission_rate } = req.body;
 
     const result = await pool.query(
@@ -53,7 +53,7 @@ export const createSalonUser = async (req: AuthenticatedRequest, res: Response) 
 export const updateSalonUser = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { role, commission_rate, is_active } = req.body;
 
     const result = await pool.query(
@@ -81,7 +81,7 @@ export const updateSalonUser = async (req: AuthenticatedRequest, res: Response) 
 // Get all services
 export const getServices = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
 
     const result = await pool.query(
       `SELECT * FROM salon_services 
@@ -103,7 +103,7 @@ export const getServices = async (req: AuthenticatedRequest, res: Response) => {
 // Create service
 export const createService = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { name, description, base_price, duration_minutes } = req.body;
 
     const result = await pool.query(
@@ -127,7 +127,7 @@ export const createService = async (req: AuthenticatedRequest, res: Response) =>
 export const updateService = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { name, description, base_price, duration_minutes, is_active } = req.body;
 
     const result = await pool.query(
@@ -155,7 +155,7 @@ export const updateService = async (req: AuthenticatedRequest, res: Response) =>
 // Get all products
 export const getProducts = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
 
     const result = await pool.query(
       `SELECT * FROM salon_products 
@@ -177,7 +177,7 @@ export const getProducts = async (req: AuthenticatedRequest, res: Response) => {
 // Create product
 export const createProduct = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { name, description, unit, current_stock, min_stock_level, unit_cost } = req.body;
 
     const result = await pool.query(
@@ -201,7 +201,7 @@ export const createProduct = async (req: AuthenticatedRequest, res: Response) =>
 export const updateProduct = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { name, description, unit, current_stock, min_stock_level, unit_cost, is_active } = req.body;
 
     const result = await pool.query(
@@ -229,7 +229,7 @@ export const updateProduct = async (req: AuthenticatedRequest, res: Response) =>
 // Get low stock products
 export const getLowStockProducts = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
 
     const result = await pool.query(
       `SELECT * FROM salon_products 

@@ -7,7 +7,7 @@ export const recordTransaction = async (req: AuthenticatedRequest, res: Response
   const client = await pool.connect();
   
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const cashierId = req.user?.id;
     const { 
       shift_id, 
@@ -95,7 +95,7 @@ export const recordTransaction = async (req: AuthenticatedRequest, res: Response
 // Get transactions
 export const getTransactions = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { employee_id, shift_id, start_date, end_date, payment_method } = req.query;
 
     let query = `
@@ -161,7 +161,7 @@ export const getTransactions = async (req: AuthenticatedRequest, res: Response) 
 export const getTransactionDetails = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
 
     const transactionResult = await pool.query(
       `SELECT t.*,
@@ -205,10 +205,26 @@ export const getTransactionDetails = async (req: AuthenticatedRequest, res: Resp
 // Get employee performance
 export const getEmployeePerformance = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { start_date, end_date } = req.query;
 
-    let query = `
+    let dateFilter = '';
+    const params: any[] = [businessId];
+    let paramCount = 1;
+
+    if (start_date) {
+      paramCount++;
+      dateFilter += ` AND t.transaction_date >= $${paramCount}`;
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      paramCount++;
+      dateFilter += ` AND t.transaction_date <= $${paramCount}`;
+      params.push(end_date);
+    }
+
+    const query = `
       SELECT 
         e.id as employee_id,
         e.name as employee_name,
@@ -219,24 +235,7 @@ export const getEmployeePerformance = async (req: AuthenticatedRequest, res: Res
         COALESCE(SUM(t.employee_earnings), 0) as total_earnings
       FROM users e
       JOIN salon_users su ON e.id = su.user_id
-      LEFT JOIN salon_transactions t ON e.id = t.employee_id AND t.business_id = $1
-    `;
-    const params: any[] = [businessId];
-    let paramCount = 1;
-
-    if (start_date) {
-      paramCount++;
-      query += ` AND t.transaction_date >= $${paramCount}`;
-      params.push(start_date);
-    }
-
-    if (end_date) {
-      paramCount++;
-      query += ` AND t.transaction_date <= $${paramCount}`;
-      params.push(end_date);
-    }
-
-    query += `
+      LEFT JOIN salon_transactions t ON e.id = t.employee_id AND t.business_id = $1${dateFilter}
       WHERE su.business_id = $1 AND su.role = 'employee' AND su.is_active = TRUE
       GROUP BY e.id, e.name, e.email, su.commission_rate
       ORDER BY total_revenue DESC
@@ -257,7 +256,7 @@ export const getEmployeePerformance = async (req: AuthenticatedRequest, res: Res
 // Get dashboard stats
 export const getDashboardStats = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = req.user?.id;
+    const businessId = req.businessId;
     const { start_date, end_date } = req.query;
 
     let dateFilter = '';
