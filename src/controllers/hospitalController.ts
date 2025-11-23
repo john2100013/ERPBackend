@@ -449,25 +449,38 @@ export class HospitalController {
   static async getLabTestResults(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = req.businessId!;
-      const { doctor_visit_id } = req.query;
+      const { doctor_visit_id, all_results } = req.query;
 
       let query = `
-        SELECT lt.*, p.patient_name, p.national_id, dv.disease_diagnosis
+        SELECT 
+          lt.*, 
+          p.patient_name, 
+          p.national_id, 
+          dv.disease_diagnosis,
+          dv.symptoms,
+          c.consultation_number,
+          c.created_at as consultation_date,
+          COALESCE(lt.doctor_viewed_at, NULL) as doctor_viewed_at
         FROM lab_tests lt
         JOIN patients p ON lt.patient_id = p.id
         JOIN doctor_visits dv ON lt.doctor_visit_id = dv.id
+        JOIN consultations c ON dv.consultation_id = c.id
         WHERE lt.business_id = $1
       `;
       const params: any[] = [businessId];
 
       if (doctor_visit_id) {
-        query += ` AND lt.doctor_visit_id = $2`;
+        query += ` AND lt.doctor_visit_id = $${params.length + 1}`;
         params.push(doctor_visit_id);
+      } else if (all_results === 'true') {
+        // Get all completed results for the doctor
+        query += ` AND lt.test_status = 'completed'`;
       } else {
+        // Default: get completed results for current visit
         query += ` AND lt.test_status = 'completed'`;
       }
 
-      query += ` ORDER BY lt.test_completed_at DESC`;
+      query += ` ORDER BY lt.test_completed_at DESC NULLS LAST, lt.test_requested_at DESC`;
 
       const result = await pool.query(query, params);
 
@@ -747,6 +760,168 @@ export class HospitalController {
       next(error);
     } finally {
       client.release();
+    }
+  }
+
+  // Get all patients visited by doctor (with search)
+  static async getDoctorPatients(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.businessId!;
+      const { search } = req.query;
+
+      let query = `
+        SELECT DISTINCT
+          p.id,
+          p.patient_name,
+          p.national_id,
+          p.age,
+          p.location,
+          p.phone_number,
+          MAX(dv.created_at) as last_visit,
+          COUNT(DISTINCT dv.id) as visit_count,
+          MAX(dv.disease_diagnosis) as latest_diagnosis
+        FROM patients p
+        JOIN consultations c ON p.id = c.patient_id
+        JOIN doctor_visits dv ON c.id = dv.consultation_id
+        WHERE p.business_id = $1
+      `;
+      const params: any[] = [businessId];
+
+      if (search) {
+        query += ` AND (
+          p.patient_name ILIKE $2 OR 
+          p.national_id ILIKE $2 OR 
+          p.phone_number ILIKE $2
+        )`;
+        params.push(`%${search}%`);
+      }
+
+      query += ` 
+        GROUP BY p.id, p.patient_name, p.national_id, p.age, p.location, p.phone_number
+        ORDER BY last_visit DESC
+        LIMIT 100
+      `;
+
+      const result = await pool.query(query, params);
+
+      res.json({
+        success: true,
+        data: { patients: result.rows }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Mark lab test result as viewed/used by doctor
+  static async markLabResultViewed(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.businessId!;
+      const { lab_test_id } = req.body;
+
+      if (!lab_test_id) {
+        res.status(400).json({ success: false, message: 'Lab test ID is required' });
+        return;
+      }
+
+      // Check if doctor_viewed_at column exists, if not just update updated_at
+      try {
+        const result = await pool.query(
+          `UPDATE lab_tests 
+           SET doctor_viewed_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND business_id = $2 AND test_status = 'completed'
+           RETURNING *`,
+          [lab_test_id, businessId]
+        );
+
+        if (result.rows.length === 0) {
+          res.status(404).json({ success: false, message: 'Lab test not found or not completed' });
+          return;
+        }
+
+        res.json({
+          success: true,
+          message: 'Lab result marked as viewed',
+          data: { lab_test: result.rows[0] }
+        });
+      } catch (colError: any) {
+        // If column doesn't exist, just update updated_at
+        if (colError.message && colError.message.includes('doctor_viewed_at')) {
+          const result = await pool.query(
+            `UPDATE lab_tests 
+             SET updated_at = NOW()
+             WHERE id = $1 AND business_id = $2 AND test_status = 'completed'
+             RETURNING *`,
+            [lab_test_id, businessId]
+          );
+
+          if (result.rows.length === 0) {
+            res.status(404).json({ success: false, message: 'Lab test not found or not completed' });
+            return;
+          }
+
+          res.json({
+            success: true,
+            message: 'Lab result marked as viewed',
+            data: { lab_test: result.rows[0] }
+          });
+        } else {
+          throw colError;
+        }
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get all lab tests (for lab screen search - pending and completed)
+  static async getAllLabTests(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.businessId!;
+      const { search, status } = req.query;
+
+      let query = `
+        SELECT 
+          lt.*,
+          p.patient_name,
+          p.national_id,
+          dv.symptoms,
+          dv.disease_diagnosis,
+          c.consultation_number
+        FROM lab_tests lt
+        JOIN patients p ON lt.patient_id = p.id
+        JOIN doctor_visits dv ON lt.doctor_visit_id = dv.id
+        JOIN consultations c ON dv.consultation_id = c.id
+        WHERE lt.business_id = $1
+      `;
+      const params: any[] = [businessId];
+
+      if (status && status !== 'all') {
+        query += ` AND lt.test_status = $${params.length + 1}`;
+        params.push(status);
+      }
+
+      if (search) {
+        query += ` AND (
+          p.patient_name ILIKE $${params.length + 1} OR 
+          p.national_id ILIKE $${params.length + 1} OR 
+          lt.test_name ILIKE $${params.length + 1} OR
+          lt.test_type ILIKE $${params.length + 1}
+        )`;
+        const searchParam = `%${search}%`;
+        params.push(searchParam, searchParam, searchParam, searchParam);
+      }
+
+      query += ` ORDER BY lt.test_requested_at DESC LIMIT 200`;
+
+      const result = await pool.query(query, params);
+
+      res.json({
+        success: true,
+        data: { lab_tests: result.rows }
+      });
+    } catch (error) {
+      next(error);
     }
   }
 }

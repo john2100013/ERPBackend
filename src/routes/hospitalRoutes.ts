@@ -30,9 +30,18 @@ router.post('/prescriptions', authenticateToken, HospitalController.createPrescr
 // Get lab test results
 router.get('/lab-tests/results', authenticateToken, HospitalController.getLabTestResults);
 
+// Mark lab result as viewed
+router.post('/lab-tests/mark-viewed', authenticateToken, HospitalController.markLabResultViewed);
+
+// Get all patients visited by doctor (with search)
+router.get('/doctor/patients', authenticateToken, HospitalController.getDoctorPatients);
+
 // ============ LAB ROUTES ============
 // Get pending lab tests
 router.get('/lab-tests/pending', authenticateToken, HospitalController.getPendingLabTests);
+
+// Get all lab tests (with search)
+router.get('/lab-tests/all', authenticateToken, HospitalController.getAllLabTests);
 
 // Update lab test result
 router.put('/lab-tests/:id/result', authenticateToken, HospitalController.updateLabTestResult);

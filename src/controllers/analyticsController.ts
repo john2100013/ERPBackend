@@ -226,6 +226,12 @@ export class AnalyticsController {
   async getStockMovement(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
       
       try {
         // Get stock movement data
@@ -252,6 +258,7 @@ export class AnalyticsController {
               FROM stock_transactions 
               WHERE transaction_type = 'in' 
                 AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                AND business_id = $1
               GROUP BY item_id
             ) inward ON i.id = inward.item_id
             LEFT JOIN (
@@ -259,16 +266,18 @@ export class AnalyticsController {
               FROM stock_transactions 
               WHERE transaction_type = 'out' 
                 AND created_at >= CURRENT_DATE - INTERVAL '3 months'
+                AND business_id = $1
               GROUP BY item_id
             ) outward ON i.id = outward.item_id
-            WHERE COALESCE(inward.quantity, 0) > 0 OR COALESCE(outward.quantity, 0) > 0
+            WHERE i.business_id = $1
+              AND (COALESCE(inward.quantity, 0) > 0 OR COALESCE(outward.quantity, 0) > 0)
           )
           SELECT * FROM stock_movements
           ORDER BY ABS(net_movement) DESC, outward_movement DESC
           LIMIT 50
         `;
 
-        const movementResult = await client.query(movementQuery);
+        const movementResult = await client.query(movementQuery, [businessId]);
         
         // Get summary data
         const summaryQuery = `
@@ -278,9 +287,10 @@ export class AnalyticsController {
             COUNT(DISTINCT item_id) as active_items
           FROM stock_transactions
           WHERE created_at >= CURRENT_DATE - INTERVAL '3 months'
+            AND business_id = $1
         `;
 
-        const summaryResult = await client.query(summaryQuery);
+        const summaryResult = await client.query(summaryQuery, [businessId]);
         const summaryData = summaryResult.rows[0];
         
         const movements = movementResult.rows.map((row: any) => ({
@@ -317,6 +327,12 @@ export class AnalyticsController {
   async getProfitabilityAnalysis(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
       
       try {
         // Get profitability data
@@ -348,6 +364,8 @@ export class AnalyticsController {
             WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
               AND inv.status IN ('paid', 'completed')
               AND i.cost_price > 0
+              AND inv.business_id = $1
+              AND i.business_id = $1
             GROUP BY i.id, i.name, ic.name
             HAVING SUM(il.quantity) > 0
           )
@@ -356,7 +374,7 @@ export class AnalyticsController {
           LIMIT 50
         `;
 
-        const profitabilityResult = await client.query(profitabilityQuery);
+        const profitabilityResult = await client.query(profitabilityQuery, [businessId]);
         
         // Get summary data
         const summaryQuery = `
@@ -370,9 +388,11 @@ export class AnalyticsController {
           WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
             AND inv.status IN ('paid', 'completed')
             AND i.cost_price > 0
+            AND inv.business_id = $1
+            AND i.business_id = $1
         `;
 
-        const summaryResult = await client.query(summaryQuery);
+        const summaryResult = await client.query(summaryQuery, [businessId]);
         const summaryData = summaryResult.rows[0];
         
         // Get best and worst performing categories
@@ -387,11 +407,13 @@ export class AnalyticsController {
           WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
             AND inv.status IN ('paid', 'completed')
             AND i.cost_price > 0
+            AND inv.business_id = $1
+            AND i.business_id = $1
           GROUP BY ic.name
           ORDER BY avg_margin DESC
         `;
 
-        const categoryResult = await client.query(categoryQuery);
+        const categoryResult = await client.query(categoryQuery, [businessId]);
         
         const items = profitabilityResult.rows.map((row: any) => ({
           id: row.id,
@@ -434,6 +456,12 @@ export class AnalyticsController {
   async getPendingActions(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
       
       try {
         const actions: any[] = [];
@@ -444,11 +472,12 @@ export class AnalyticsController {
           FROM invoices 
           WHERE status = 'pending' 
             AND due_date < CURRENT_DATE
+            AND business_id = $1
           ORDER BY due_date ASC
           LIMIT 10
         `;
         
-        const overdueResult = await client.query(overdueInvoicesQuery);
+        const overdueResult = await client.query(overdueInvoicesQuery, [businessId]);
         
         for (const invoice of overdueResult.rows) {
           const daysOverdue = Math.floor((new Date().getTime() - new Date(invoice.due_date).getTime()) / (1000 * 60 * 60 * 24));
@@ -470,11 +499,12 @@ export class AnalyticsController {
           FROM items 
           WHERE quantity <= reorder_level
             AND reorder_level > 0
+            AND business_id = $1
           ORDER BY quantity ASC
           LIMIT 10
         `;
         
-        const lowStockResult = await client.query(lowStockQuery);
+        const lowStockResult = await client.query(lowStockQuery, [businessId]);
         
         for (const item of lowStockResult.rows) {
           actions.push({
@@ -493,11 +523,12 @@ export class AnalyticsController {
           FROM invoices 
           WHERE status = 'pending'
             AND created_at < CURRENT_DATE - INTERVAL '7 days'
+            AND business_id = $1
           ORDER BY created_at ASC
           LIMIT 10
         `;
         
-        const pendingResult = await client.query(pendingPaymentsQuery);
+        const pendingResult = await client.query(pendingPaymentsQuery, [businessId]);
         
         for (const payment of pendingResult.rows) {
           const daysPending = Math.floor((new Date().getTime() - new Date(payment.created_at).getTime()) / (1000 * 60 * 60 * 24));
@@ -535,6 +566,12 @@ export class AnalyticsController {
   async getOverview(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
       
       try {
         // Get total sales from invoices
@@ -545,15 +582,17 @@ export class AnalyticsController {
             COALESCE(SUM(total_amount - vat_amount), 0) as gross_profit
           FROM invoices 
           WHERE created_at >= CURRENT_DATE - INTERVAL '1 month'
+            AND business_id = $1
         `;
-        const salesResult = await client.query(salesQuery);
+        const salesResult = await client.query(salesQuery, [businessId]);
 
         // Get total customers
         const customersQuery = `
           SELECT COUNT(*) as total_customers 
           FROM customers
+          WHERE business_id = $1
         `;
-        const customersResult = await client.query(customersQuery);
+        const customersResult = await client.query(customersQuery, [businessId]);
 
         // Get total items and low stock count
         const itemsQuery = `
@@ -561,16 +600,18 @@ export class AnalyticsController {
             COUNT(*) as total_items,
             COUNT(CASE WHEN quantity <= min_stock_level THEN 1 END) as low_stock_items
           FROM items
+          WHERE business_id = $1
         `;
-        const itemsResult = await client.query(itemsQuery);
+        const itemsResult = await client.query(itemsQuery, [businessId]);
 
         // Get pending quotations
         const quotationsQuery = `
           SELECT COUNT(*) as pending_quotations
           FROM quotations 
           WHERE status = 'pending'
+            AND business_id = $1
         `;
-        const quotationsResult = await client.query(quotationsQuery);
+        const quotationsResult = await client.query(quotationsQuery, [businessId]);
 
         // Calculate conversion rate (invoices vs quotations)
         const conversionQuery = `
@@ -581,6 +622,7 @@ export class AnalyticsController {
             FROM quotations q
             LEFT JOIN invoices i ON q.id = i.quotation_id
             WHERE q.created_at >= CURRENT_DATE - INTERVAL '1 month'
+              AND q.business_id = $1
           )
           SELECT 
             CASE 
@@ -589,7 +631,7 @@ export class AnalyticsController {
             END as conversion_rate
           FROM monthly_stats
         `;
-        const conversionResult = await client.query(conversionQuery);
+        const conversionResult = await client.query(conversionQuery, [businessId]);
 
         const overview = {
           totalSales: parseFloat(salesResult.rows[0].total_sales || 0),
@@ -619,7 +661,8 @@ export class AnalyticsController {
       const businessId = req.businessId;
       
       if (!businessId) {
-        return res.status(400).json({ error: 'Business ID is required' });
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
       }
       
       try {
@@ -696,31 +739,32 @@ export class AnalyticsController {
       const businessId = req.businessId;
       
       if (!businessId) {
-        return res.status(400).json({ error: 'Business ID is required' });
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
       }
       
       try {
         const dateRange = req.query.dateRange as string || 'this_month';
-        let dateFilter = '';
+        let dateCondition = '';
         
         switch (dateRange) {
           case 'today':
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE";
+            dateCondition = "inv.created_at >= CURRENT_DATE";
             break;
           case 'this_week':
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
             break;
           case 'this_month':
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
             break;
           case 'this_quarter':
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
             break;
           case 'this_year':
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
             break;
           default:
-            dateFilter = "WHERE inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
         }
 
         // Get total sales and invoices
@@ -731,7 +775,7 @@ export class AnalyticsController {
             COALESCE(AVG(total_amount), 0) as average_order_value,
             COALESCE(SUM(total_amount - vat_amount), 0) as gross_profit
           FROM invoices inv
-          ${dateFilter}
+          WHERE ${dateCondition}
             AND inv.business_id = $1
             AND inv.status IN ('paid', 'completed', 'sent')
         `;
@@ -744,11 +788,31 @@ export class AnalyticsController {
         const profitMargin = totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
 
         // Get previous period for growth calculation
-        const prevDateFilter = dateFilter.replace('CURRENT_DATE', `CURRENT_DATE - INTERVAL '${dateRange === 'today' ? '1 day' : dateRange === 'this_week' ? '7 days' : dateRange === 'this_month' ? '1 month' : dateRange === 'this_quarter' ? '3 months' : '1 year'}'`);
+        let prevDateCondition = '';
+        switch (dateRange) {
+          case 'today':
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 day' AND inv.created_at < CURRENT_DATE";
+            break;
+          case 'this_week':
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '14 days' AND inv.created_at < CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 months' AND inv.created_at < CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '6 months' AND inv.created_at < CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 years' AND inv.created_at < CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          default:
+            prevDateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 months' AND inv.created_at < CURRENT_DATE - INTERVAL '1 month'";
+        }
+        
         const prevSalesQuery = `
           SELECT COALESCE(SUM(total_amount), 0) as total_sales
           FROM invoices inv
-          ${prevDateFilter}
+          WHERE ${prevDateCondition}
             AND inv.business_id = $1
             AND inv.status IN ('paid', 'completed', 'sent')
         `;
@@ -759,15 +823,15 @@ export class AnalyticsController {
         // Get daily sales
         const dailySalesQuery = `
           SELECT 
-            DATE(created_at) as date,
+            DATE(inv.created_at) as date,
             COUNT(*) as invoices,
-            COALESCE(SUM(total_amount), 0) as sales,
-            COALESCE(SUM(total_amount - vat_amount), 0) as profit
-          FROM invoices
-          ${dateFilter}
-            AND business_id = $1
-            AND status IN ('paid', 'completed', 'sent')
-          GROUP BY DATE(created_at)
+            COALESCE(SUM(inv.total_amount), 0) as sales,
+            COALESCE(SUM(inv.total_amount - inv.vat_amount), 0) as profit
+          FROM invoices inv
+          WHERE ${dateCondition}
+            AND inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
+          GROUP BY DATE(inv.created_at)
           ORDER BY date DESC
           LIMIT 30
         `;
@@ -808,7 +872,8 @@ export class AnalyticsController {
       const businessId = req.businessId;
       
       if (!businessId) {
-        return res.status(400).json({ error: 'Business ID is required' });
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
       }
       
       try {
