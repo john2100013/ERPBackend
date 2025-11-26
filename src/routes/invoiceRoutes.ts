@@ -663,7 +663,14 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
   
   try {
     const businessId = req.user?.business_id;
-    const invoiceId = req.params.id;
+    const invoiceId = parseInt(req.params.id);
+    
+    if (isNaN(invoiceId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid invoice ID'
+      });
+    }
 
     if (!businessId) {
       return res.status(400).json({

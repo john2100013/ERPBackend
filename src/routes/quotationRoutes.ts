@@ -564,7 +564,14 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {
     const businessId = req.user?.business_id;
-    const quotationId = req.params.id;
+    const quotationId = parseInt(req.params.id);
+    
+    if (isNaN(quotationId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid quotation ID'
+      });
+    }
 
     if (!businessId) {
       return res.status(400).json({
