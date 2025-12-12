@@ -15,7 +15,7 @@ export const recordTransaction = async (req: AuthenticatedRequest, res: Response
       service_id, 
       customer_name, 
       customer_phone, 
-      amount_paid, 
+      service_price, 
       payment_method,
       products_used 
     } = req.body;
@@ -44,15 +44,15 @@ export const recordTransaction = async (req: AuthenticatedRequest, res: Response
     }
 
     const commission_rate = parseFloat(employeeResult.rows[0].commission_rate) || 0;
-    const employee_earnings = (parseFloat(amount_paid) * commission_rate) / 100;
+    const employee_commission = (parseFloat(service_price) * commission_rate) / 100;
 
     // Insert transaction
     const transactionResult = await client.query(
       `INSERT INTO salon_transactions 
-       (business_id, shift_id, employee_id, cashier_id, service_id, customer_name, customer_phone, amount_paid, payment_method, employee_earnings)
+       (business_id, shift_id, employee_id, cashier_id, service_id, customer_name, customer_phone, service_price, payment_method, employee_commission)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [businessId, shift_id, employee_id, cashierId, service_id, customer_name, customer_phone, amount_paid, payment_method, employee_earnings]
+      [businessId, shift_id, employee_id, cashierId, service_id, customer_name, customer_phone, service_price, payment_method, employee_commission]
     );
 
     const transaction = transactionResult.rows[0];
@@ -100,8 +100,8 @@ export const getTransactions = async (req: AuthenticatedRequest, res: Response) 
 
     let query = `
       SELECT t.*,
-             e.name as employee_name,
-             c.name as cashier_name,
+             CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+             CONCAT(c.first_name, ' ', c.last_name) as cashier_name,
              srv.name as service_name,
              srv.base_price
       FROM salon_transactions t
@@ -165,8 +165,8 @@ export const getTransactionDetails = async (req: AuthenticatedRequest, res: Resp
 
     const transactionResult = await pool.query(
       `SELECT t.*,
-              e.name as employee_name,
-              c.name as cashier_name,
+              CONCAT(e.first_name, ' ', e.last_name) as employee_name,
+              CONCAT(c.first_name, ' ', c.last_name) as cashier_name,
               srv.name as service_name,
               srv.base_price
        FROM salon_transactions t
@@ -227,17 +227,17 @@ export const getEmployeePerformance = async (req: AuthenticatedRequest, res: Res
     const query = `
       SELECT 
         e.id as employee_id,
-        e.name as employee_name,
+        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
         e.email,
         su.commission_rate,
         COUNT(t.id) as total_clients,
-        COALESCE(SUM(t.amount_paid), 0) as total_revenue,
-        COALESCE(SUM(t.employee_earnings), 0) as total_earnings
+        COALESCE(SUM(t.service_price), 0) as total_revenue,
+        COALESCE(SUM(t.employee_commission), 0) as total_earnings
       FROM users e
       JOIN salon_users su ON e.id = su.user_id
       LEFT JOIN salon_transactions t ON e.id = t.employee_id AND t.business_id = $1${dateFilter}
       WHERE su.business_id = $1 AND su.role = 'employee' AND su.is_active = TRUE
-      GROUP BY e.id, e.name, e.email, su.commission_rate
+      GROUP BY e.id, e.first_name, e.last_name, e.email, su.commission_rate
       ORDER BY total_revenue DESC
     `;
 
@@ -279,10 +279,10 @@ export const getDashboardStats = async (req: AuthenticatedRequest, res: Response
     const revenueResult = await pool.query(
       `SELECT 
          COUNT(*) as total_transactions,
-         COALESCE(SUM(amount_paid), 0) as total_revenue,
-         COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN amount_paid ELSE 0 END), 0) as cash_revenue,
-         COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN amount_paid ELSE 0 END), 0) as mpesa_revenue,
-         COALESCE(SUM(CASE WHEN payment_method = 'card' THEN amount_paid ELSE 0 END), 0) as card_revenue
+         COALESCE(SUM(service_price), 0) as total_revenue,
+         COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN service_price ELSE 0 END), 0) as cash_revenue,
+         COALESCE(SUM(CASE WHEN payment_method = 'mpesa' THEN service_price ELSE 0 END), 0) as mpesa_revenue,
+         COALESCE(SUM(CASE WHEN payment_method = 'card' THEN service_price ELSE 0 END), 0) as card_revenue
        FROM salon_transactions
        WHERE business_id = $1${dateFilter}`,
       params
@@ -293,7 +293,7 @@ export const getDashboardStats = async (req: AuthenticatedRequest, res: Response
       `SELECT 
          srv.name,
          COUNT(t.id) as service_count,
-         COALESCE(SUM(t.amount_paid), 0) as total_revenue
+         COALESCE(SUM(t.service_price), 0) as total_revenue
        FROM salon_transactions t
        JOIN salon_services srv ON t.service_id = srv.id
        WHERE t.business_id = $1${dateFilter}

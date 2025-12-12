@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import bcrypt from 'bcryptjs';
 import pool from '../database/connection';
 import { AuthenticatedRequest } from '../middleware/auth';
 
@@ -7,12 +8,50 @@ export const getSalonUsers = async (req: AuthenticatedRequest, res: Response) =>
   try {
     const businessId = req.businessId;
     
+    console.log('🔍 Fetching salon users for business_id:', businessId);
+    
     const result = await pool.query(
-      `SELECT su.*, u.name, u.email, u.phone_number
+      `SELECT su.*, CONCAT(u.first_name, ' ', u.last_name) as name, u.email
        FROM salon_users su
        JOIN users u ON su.user_id = u.id
        WHERE su.business_id = $1
        ORDER BY su.created_at DESC`,
+      [businessId]
+    );
+
+    console.log('✅ Found salon users:', result.rows.length);
+    console.log('📋 Salon users data:', JSON.stringify(result.rows, null, 2));
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (error: any) {
+    console.error('❌ Error fetching salon users:', error);
+    console.error('Error details:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch salon users',
+      error: error.message 
+    });
+  }
+};
+
+// Get available users (users not already salon users for this business)
+export const getAvailableUsers = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessId;
+    
+    const result = await pool.query(
+      `SELECT u.id, CONCAT(u.first_name, ' ', u.last_name) as name, u.email
+       FROM users u
+       WHERE u.business_id = $1
+         AND u.id NOT IN (
+           SELECT su.user_id 
+           FROM salon_users su 
+           WHERE su.business_id = $1
+         )
+       ORDER BY u.first_name, u.last_name`,
       [businessId]
     );
 
@@ -21,31 +60,123 @@ export const getSalonUsers = async (req: AuthenticatedRequest, res: Response) =>
       data: result.rows
     });
   } catch (error) {
-    console.error('Error fetching salon users:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch salon users' });
+    console.error('Error fetching available users:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch available users' });
   }
 };
 
 // Create salon user
 export const createSalonUser = async (req: AuthenticatedRequest, res: Response) => {
+  const client = await pool.connect();
+  
   try {
     const businessId = req.businessId;
-    const { user_id, role, commission_rate } = req.body;
+    const { user_id, first_name, last_name, email, role, commission_rate } = req.body;
 
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    let finalUserId = user_id;
+
+    // If user_id is not provided, create a new user
+    if (!user_id && first_name && last_name) {
+      // Check if email is provided and if it already exists
+      if (email) {
+        const existingUser = await client.query(
+          'SELECT id FROM users WHERE email = $1',
+          [email.toLowerCase().trim()]
+        );
+
+        if (existingUser.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Email already exists. Please select this user from the list instead.' 
+          });
+        }
+      }
+
+      // Generate a random password for salon employees (they can reset it later if needed)
+      const randomPassword = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12);
+      const passwordHash = await bcrypt.hash(randomPassword, 12);
+
+      // Generate email if not provided
+      const userEmail = email || `${first_name.toLowerCase()}.${last_name.toLowerCase()}@salon.local`;
+
+      // Create new user
+      const userResult = await client.query(
+        `INSERT INTO users (business_id, email, first_name, last_name, password_hash, role, status)
+         VALUES ($1, $2, $3, $4, $5, 'employee', 'active')
+         RETURNING id`,
+        [businessId, userEmail.toLowerCase().trim(), first_name.trim(), last_name.trim(), passwordHash]
+      );
+
+      finalUserId = userResult.rows[0].id;
+    }
+
+    if (!finalUserId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Either user_id or first_name and last_name must be provided' 
+      });
+    }
+
+    // Check if user already exists as salon user
+    const existingSalonUser = await client.query(
+      'SELECT id FROM salon_users WHERE user_id = $1 AND business_id = $2',
+      [finalUserId, businessId]
+    );
+
+    if (existingSalonUser.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is already a salon user' 
+      });
+    }
+
+    // Create salon user
+    const result = await client.query(
       `INSERT INTO salon_users (user_id, business_id, role, commission_rate)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [user_id, businessId, role, commission_rate || 0]
+      [finalUserId, businessId, role || 'employee', commission_rate || 0]
+    );
+
+    await client.query('COMMIT');
+
+    console.log('✅ Salon user created:', result.rows[0]);
+
+    // Return the created salon user with user details
+    const salonUserWithDetails = await pool.query(
+      `SELECT su.*, CONCAT(u.first_name, ' ', u.last_name) as name, u.email
+       FROM salon_users su
+       JOIN users u ON su.user_id = u.id
+       WHERE su.id = $1`,
+      [result.rows[0].id]
     );
 
     res.status(201).json({
       success: true,
-      data: result.rows[0]
+      data: salonUserWithDetails.rows[0] || result.rows[0]
     });
-  } catch (error) {
+  } catch (error: any) {
+    await client.query('ROLLBACK');
     console.error('Error creating salon user:', error);
-    res.status(500).json({ success: false, message: 'Failed to create salon user' });
+    
+    if (error.code === '23503') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User not found. Please create the user first or select an existing user.' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to create salon user' 
+    });
+  } finally {
+    client.release();
   }
 };
 
@@ -82,6 +213,8 @@ export const updateSalonUser = async (req: AuthenticatedRequest, res: Response) 
 export const getServices = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessId;
+    
+    console.log('🔍 Fetching salon services for business_id:', businessId);
 
     const result = await pool.query(
       `SELECT * FROM salon_services 
@@ -90,13 +223,36 @@ export const getServices = async (req: AuthenticatedRequest, res: Response) => {
       [businessId]
     );
 
+    // If no active services found, check all services (for debugging)
+    if (result.rows.length === 0) {
+      console.log('⚠️ No active services found, checking all services...');
+      const allResult = await pool.query(
+        `SELECT * FROM salon_services 
+         WHERE business_id = $1
+         ORDER BY name ASC`,
+        [businessId]
+      );
+      console.log('📋 All services (including inactive):', allResult.rows.length);
+      if (allResult.rows.length > 0) {
+        console.log('⚠️ Found inactive services:', allResult.rows.map((s: any) => ({ id: s.id, name: s.name, is_active: s.is_active })));
+      }
+    }
+
+    console.log('✅ Found salon services:', result.rows.length);
+    console.log('📋 Salon services data:', JSON.stringify(result.rows, null, 2));
+
     res.json({
       success: true,
       data: result.rows
     });
-  } catch (error) {
-    console.error('Error fetching services:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch services' });
+  } catch (error: any) {
+    console.error('❌ Error fetching services:', error);
+    console.error('Error details:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch services',
+      error: error.message 
+    });
   }
 };
 
@@ -106,20 +262,28 @@ export const createService = async (req: AuthenticatedRequest, res: Response) =>
     const businessId = req.businessId;
     const { name, description, base_price, duration_minutes } = req.body;
 
+    console.log('🔍 Creating salon service:', { businessId, name, base_price, duration_minutes });
+
     const result = await pool.query(
-      `INSERT INTO salon_services (business_id, name, description, base_price, duration_minutes)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO salon_services (business_id, name, description, base_price, duration_minutes, is_active)
+       VALUES ($1, $2, $3, $4, $5, TRUE)
        RETURNING *`,
       [businessId, name, description, base_price, duration_minutes]
     );
+
+    console.log('✅ Salon service created:', result.rows[0]);
 
     res.status(201).json({
       success: true,
       data: result.rows[0]
     });
-  } catch (error) {
-    console.error('Error creating service:', error);
-    res.status(500).json({ success: false, message: 'Failed to create service' });
+  } catch (error: any) {
+    console.error('❌ Error creating service:', error);
+    console.error('Error details:', error.message, error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to create service' 
+    });
   }
 };
 

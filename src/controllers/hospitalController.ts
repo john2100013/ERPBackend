@@ -465,6 +465,8 @@ export class HospitalController {
           lt.test_result,
           lt.test_status,
           lt.lab_technician_id,
+          lt.attachment_url,
+          lt.attachment_filename,
           lt.created_at,
           lt.updated_at,
           p.patient_name, 
@@ -542,7 +544,7 @@ export class HospitalController {
     try {
       const businessId = req.businessId!;
       const userId = req.user?.id;
-      const { lab_test_id, test_result } = req.body;
+      const { lab_test_id, test_result, attachment_url, attachment_filename } = req.body;
 
       if (!lab_test_id || !test_result) {
         res.status(400).json({ success: false, message: 'Lab test ID and result are required' });
@@ -553,9 +555,9 @@ export class HospitalController {
 
       const result = await client.query(
         `UPDATE lab_tests SET test_result = $1, test_status = 'completed', test_completed_at = NOW(), 
-         lab_technician_id = $2, updated_at = NOW()
-         WHERE id = $3 AND business_id = $4 RETURNING *`,
-        [test_result, userId, lab_test_id, businessId]
+         lab_technician_id = $2, attachment_url = $3, attachment_filename = $4, updated_at = NOW()
+         WHERE id = $5 AND business_id = $6 RETURNING *`,
+        [test_result, userId, attachment_url || null, attachment_filename || null, lab_test_id, businessId]
       );
 
       if (result.rows.length === 0) {
@@ -615,6 +617,66 @@ export class HospitalController {
          ORDER BY pr.created_at ASC`,
         [businessId]
       );
+
+      res.json({
+        success: true,
+        data: { prescriptions: result.rows }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get all prescriptions (with optional filters)
+  static async getAllPrescriptions(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.businessId!;
+      const { status, startDate, endDate, search } = req.query;
+
+      let query = `
+        SELECT pr.*, p.patient_name, p.national_id, p.age, dv.disease_diagnosis
+        FROM prescriptions pr
+        JOIN patients p ON pr.patient_id = p.id
+        LEFT JOIN doctor_visits dv ON pr.doctor_visit_id = dv.id
+        WHERE pr.business_id = $1
+      `;
+      const queryParams: any[] = [businessId];
+      let paramIndex = 2;
+
+      // Add status filter
+      if (status && status !== 'all') {
+        query += ` AND pr.status = $${paramIndex}`;
+        queryParams.push(status);
+        paramIndex++;
+      }
+
+      // Add date range filter
+      if (startDate) {
+        query += ` AND pr.created_at >= $${paramIndex}`;
+        queryParams.push(startDate);
+        paramIndex++;
+      }
+
+      if (endDate) {
+        query += ` AND pr.created_at <= $${paramIndex}`;
+        queryParams.push(endDate);
+        paramIndex++;
+      }
+
+      // Add search filter
+      if (search) {
+        query += ` AND (
+          pr.prescription_number ILIKE $${paramIndex} OR 
+          p.patient_name ILIKE $${paramIndex} OR 
+          p.national_id ILIKE $${paramIndex}
+        )`;
+        queryParams.push(`%${search}%`);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY pr.created_at DESC`;
+
+      const result = await pool.query(query, queryParams);
 
       res.json({
         success: true,
@@ -953,13 +1015,15 @@ export class HospitalController {
         [foundPatientId, businessId]
       );
 
-      // Get all prescriptions for this patient
+      // Get all prescriptions for this patient with items
+      // Note: prescription_items has item_name, items table has 'name' column
       const prescriptionsResult = await pool.query(
         `SELECT p.*, dv.consultation_id, c.consultation_number,
                 (SELECT json_agg(json_build_object(
                   'id', pi.id,
                   'item_id', pi.item_id,
-                  'item_name', i.name,
+                  'item_name', COALESCE(pi.item_name, i.name, 'Unknown Medicine'),
+                  'name', COALESCE(pi.item_name, i.name, 'Unknown Medicine'),
                   'quantity_prescribed', pi.quantity_prescribed,
                   'unit_price', pi.unit_price,
                   'quantity_fulfilled', pi.quantity_fulfilled,

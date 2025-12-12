@@ -482,7 +482,36 @@ export class AnalyticsController {
       }
       
       try {
-        // Get profitability data
+        const dateRange = req.query.dateRange as string || 'this_month';
+        let dateCondition = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateCondition = "inv.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          case 'last_month':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 months' AND inv.created_at < CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'last_quarter':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '6 months' AND inv.created_at < CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          default:
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+        }
+
+        // Get profitability data with date filter
         const profitabilityQuery = `
           WITH item_profitability AS (
             SELECT 
@@ -508,8 +537,8 @@ export class AnalyticsController {
             LEFT JOIN item_categories ic ON i.category_id = ic.id
             LEFT JOIN invoice_lines il ON i.id = il.item_id
             LEFT JOIN invoices inv ON il.invoice_id = inv.id
-            WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
-              AND inv.status IN ('paid', 'completed')
+            WHERE ${dateCondition}
+              AND inv.status IN ('paid', 'completed', 'sent')
               AND COALESCE(i.cost_price, i.buying_price, 0) > 0
               AND inv.business_id = $1
               AND i.business_id = $1
@@ -523,7 +552,7 @@ export class AnalyticsController {
 
         const profitabilityResult = await client.query(profitabilityQuery, [businessId]);
         
-        // Get summary data
+        // Get summary data with date filter
         const summaryQuery = `
           SELECT 
             SUM(il.quantity * il.unit_price) as total_revenue,
@@ -532,8 +561,8 @@ export class AnalyticsController {
           FROM items i
           JOIN invoice_lines il ON i.id = il.item_id
           JOIN invoices inv ON il.invoice_id = inv.id
-          WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
-            AND inv.status IN ('paid', 'completed')
+          WHERE ${dateCondition}
+            AND inv.status IN ('paid', 'completed', 'sent')
             AND COALESCE(i.cost_price, i.buying_price, 0) > 0
             AND inv.business_id = $1
             AND i.business_id = $1
@@ -542,7 +571,7 @@ export class AnalyticsController {
         const summaryResult = await client.query(summaryQuery, [businessId]);
         const summaryData = summaryResult.rows[0];
         
-        // Get best and worst performing categories
+        // Get best and worst performing categories with date filter
         const categoryQuery = `
           SELECT 
             ic.name as category,
@@ -551,8 +580,8 @@ export class AnalyticsController {
           JOIN item_categories ic ON i.category_id = ic.id
           JOIN invoice_lines il ON i.id = il.item_id
           JOIN invoices inv ON il.invoice_id = inv.id
-          WHERE inv.created_at >= CURRENT_DATE - INTERVAL '6 months'
-            AND inv.status IN ('paid', 'completed')
+          WHERE ${dateCondition}
+            AND inv.status IN ('paid', 'completed', 'sent')
             AND COALESCE(i.cost_price, i.buying_price, 0) > 0
             AND inv.business_id = $1
             AND i.business_id = $1
@@ -570,7 +599,7 @@ export class AnalyticsController {
           cost: parseFloat(row.cost),
           grossProfit: parseFloat(row.gross_profit),
           marginPercentage: parseFloat(row.margin_percentage),
-          unitsSold: parseInt(row.units_sold),
+          unitsSold: parseFloat(row.units_sold),
           profitPerUnit: parseFloat(row.profit_per_unit),
           profitTrend: Math.random() > 0.6 ? 'increasing' : Math.random() > 0.3 ? 'stable' : 'decreasing'
         }));
@@ -779,15 +808,20 @@ export class AnalyticsController {
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '1 month'";
         }
 
-        // Get total sales from invoices
+        // Get total sales from invoices with proper gross profit calculation
         const salesQuery = `
           SELECT 
-            COUNT(*) as total_invoices,
-            COALESCE(SUM(total_amount), 0) as total_sales,
-            COALESCE(SUM(total_amount - COALESCE(vat_amount, 0)), 0) as gross_profit
-          FROM invoices 
+            COUNT(DISTINCT inv.id) as total_invoices,
+            COALESCE(SUM(inv.total_amount), 0) as total_sales,
+            COALESCE(SUM(
+              il.quantity * (il.unit_price - COALESCE(i.buying_price, i.cost_price, 0))
+            ), 0) as gross_profit
+          FROM invoices inv
+          LEFT JOIN invoice_lines il ON inv.id = il.invoice_id
+          LEFT JOIN items i ON il.item_id = i.id
           WHERE ${dateCondition}
-            AND business_id = $1
+            AND inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
         `;
         const salesResult = await client.query(salesQuery, [businessId]);
 
@@ -932,6 +966,9 @@ export class AnalyticsController {
             i.name as item_name,
             SUM(il.quantity) as quantity,
             SUM(il.total) as sales,
+            COALESCE(i.buying_price, i.cost_price, 0) as buying_price,
+            COALESCE(i.selling_price, 0) as selling_price,
+            SUM(il.quantity * il.unit_price) - SUM(il.quantity * COALESCE(i.buying_price, i.cost_price, 0)) as profit,
             CASE 
               WHEN SUM(il.quantity) >= 100 THEN 'fast'
               WHEN SUM(il.quantity) >= 50 THEN 'medium'
@@ -943,9 +980,9 @@ export class AnalyticsController {
           WHERE inv.business_id = $1
             AND inv.status IN ('paid', 'completed', 'sent')
             AND ${dateCondition}
-          GROUP BY i.id, i.name
+          GROUP BY i.id, i.name, i.buying_price, i.cost_price, i.selling_price
           HAVING SUM(il.quantity) > 0
-          ORDER BY sales DESC, quantity DESC
+          ORDER BY profit DESC, sales DESC, quantity DESC
           LIMIT 50
         `;
 
@@ -962,6 +999,9 @@ export class AnalyticsController {
           itemName: row.item_name,
           sales: parseFloat(row.sales || 0),
           quantity: parseFloat(row.quantity || 0),
+          buyingPrice: parseFloat(row.buying_price || 0),
+          sellingPrice: parseFloat(row.selling_price || 0),
+          profit: parseFloat(row.profit || 0),
           velocity: row.velocity
         }));
 
@@ -1135,6 +1175,70 @@ export class AnalyticsController {
           profit: parseFloat(row.profit || 0)
         }));
 
+        // Get item sold details (quantity and total for each item)
+        const itemsSoldQuery = `
+          SELECT 
+            i.id,
+            i.name as item_name,
+            COALESCE(il.code, '') as code,
+            SUM(il.quantity) as total_quantity,
+            SUM(il.total) as total_amount
+          FROM items i
+          INNER JOIN invoice_lines il ON i.id = il.item_id
+          INNER JOIN invoices inv ON il.invoice_id = inv.id
+          WHERE ${dateCondition}
+            AND inv.business_id = $1
+            AND inv.status IN ('paid', 'completed', 'sent')
+          GROUP BY i.id, i.name, il.code
+          HAVING SUM(il.quantity) > 0
+          ORDER BY total_quantity DESC
+        `;
+
+        const itemsSoldResult = await client.query(itemsSoldQuery, [businessId]);
+        
+        const itemsSold = itemsSoldResult.rows.map((row: any) => ({
+          id: row.id,
+          itemName: row.item_name,
+          code: row.code,
+          quantity: parseFloat(row.total_quantity || 0),
+          total: parseFloat(row.total_amount || 0)
+        }));
+
+        // Calculate total for all items
+        const totalItemsSold = itemsSold.reduce((sum, item) => sum + item.total, 0);
+        const totalItemsQuantity = itemsSold.reduce((sum, item) => sum + item.quantity, 0);
+
+        // Get total sales breakdown by period
+        const todaySalesQuery = `
+          SELECT COALESCE(SUM(total_amount), 0) as total_sales
+          FROM invoices
+          WHERE business_id = $1
+            AND created_at >= CURRENT_DATE
+            AND status IN ('paid', 'completed', 'sent')
+        `;
+        const todayResult = await client.query(todaySalesQuery, [businessId]);
+        const todaySales = parseFloat(todayResult.rows[0]?.total_sales || 0);
+
+        const weekSalesQuery = `
+          SELECT COALESCE(SUM(total_amount), 0) as total_sales
+          FROM invoices
+          WHERE business_id = $1
+            AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+            AND status IN ('paid', 'completed', 'sent')
+        `;
+        const weekResult = await client.query(weekSalesQuery, [businessId]);
+        const weekSales = parseFloat(weekResult.rows[0]?.total_sales || 0);
+
+        const monthSalesQuery = `
+          SELECT COALESCE(SUM(total_amount), 0) as total_sales
+          FROM invoices
+          WHERE business_id = $1
+            AND created_at >= CURRENT_DATE - INTERVAL '1 month'
+            AND status IN ('paid', 'completed', 'sent')
+        `;
+        const monthResult = await client.query(monthSalesQuery, [businessId]);
+        const monthSales = parseFloat(monthResult.rows[0]?.total_sales || 0);
+
         const metrics = {
           totalSales,
           totalInvoices: parseInt(salesData.total_invoices || 0),
@@ -1142,7 +1246,15 @@ export class AnalyticsController {
           grossProfit,
           profitMargin: parseFloat(profitMargin.toFixed(2)),
           salesGrowth: parseFloat(salesGrowth.toFixed(2)),
-          dailySales
+          dailySales,
+          itemsSold,
+          totalItemsSold,
+          totalItemsQuantity,
+          salesBreakdown: {
+            today: todaySales,
+            week: weekSales,
+            month: monthSales
+          }
         };
 
         res.json({ metrics });
@@ -1327,6 +1439,241 @@ export class AnalyticsController {
     } catch (error) {
       console.error('Error fetching inventory overview:', error);
       res.status(500).json({ error: 'Failed to fetch inventory overview' });
+    }
+  }
+
+  // All Invoices with Products
+  async getAllInvoices(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
+      
+      try {
+        const dateRange = req.query.dateRange as string || 'today';
+        let dateCondition = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateCondition = "inv.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          case 'last_month':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 months' AND inv.created_at < CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'last_quarter':
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '6 months' AND inv.created_at < CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          default:
+            dateCondition = "inv.created_at >= CURRENT_DATE";
+        }
+
+        // Get all invoices with their line items
+        const invoicesQuery = `
+          SELECT 
+            inv.id,
+            inv.invoice_number,
+            inv.customer_name,
+            inv.created_at,
+            inv.issue_date,
+            inv.total_amount,
+            COALESCE(inv.amount_paid, 0) as amount_paid,
+            COALESCE(inv.balance_due, inv.total_amount - COALESCE(inv.amount_paid, 0), inv.total_amount) as amount_due,
+            inv.status,
+            inv.payment_status,
+            json_agg(
+              json_build_object(
+                'id', il.id,
+                'item_id', il.item_id,
+                'description', il.description,
+                'code', il.code,
+                'quantity', il.quantity,
+                'unit_price', il.unit_price,
+                'total', il.total,
+                'uom', il.uom
+              ) ORDER BY il.id
+            ) as products
+          FROM invoices inv
+          LEFT JOIN invoice_lines il ON inv.id = il.invoice_id
+          WHERE inv.business_id = $1
+            AND ${dateCondition}
+          GROUP BY inv.id, inv.invoice_number, inv.customer_name, inv.created_at, 
+                   inv.issue_date, inv.total_amount, inv.amount_paid, inv.balance_due, 
+                   inv.status, inv.payment_status
+          ORDER BY inv.created_at DESC
+        `;
+
+        const result = await client.query(invoicesQuery, [businessId]);
+        
+        const invoices = result.rows.map((row: any) => ({
+          id: row.id,
+          invoiceNumber: row.invoice_number,
+          customerName: row.customer_name,
+          createdAt: row.created_at.toISOString(),
+          issueDate: row.issue_date ? row.issue_date.toISOString().split('T')[0] : null,
+          totalAmount: parseFloat(row.total_amount || 0),
+          amountPaid: parseFloat(row.amount_paid || 0),
+          amountDue: parseFloat(row.amount_due || 0),
+          status: row.status,
+          paymentStatus: row.payment_status,
+          products: row.products && row.products[0]?.id ? row.products : []
+        }));
+
+        res.json({ invoices });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching all invoices:', error);
+      res.status(500).json({ error: 'Failed to fetch all invoices' });
+    }
+  }
+
+  // All Quotations with Products
+  async getAllQuotations(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
+      
+      try {
+        const dateRange = req.query.dateRange as string || 'today';
+        let dateCondition = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateCondition = "q.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          case 'last_month':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '2 months' AND q.created_at < CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'last_quarter':
+            dateCondition = "q.created_at >= CURRENT_DATE - INTERVAL '6 months' AND q.created_at < CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          default:
+            dateCondition = "q.created_at >= CURRENT_DATE";
+        }
+
+        // Get all quotations with their line items
+        // Check if issue_date column exists
+        const columnCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.columns 
+            WHERE table_name = 'quotations' AND column_name = 'issue_date'
+          );
+        `);
+        const hasIssueDate = columnCheck.rows[0]?.exists || false;
+
+        const quotationsQuery = hasIssueDate ? `
+          SELECT 
+            q.id,
+            q.quotation_number,
+            q.customer_name,
+            q.created_at,
+            q.issue_date,
+            q.total_amount,
+            q.status,
+            q.valid_until,
+            json_agg(
+              json_build_object(
+                'id', ql.id,
+                'item_id', ql.item_id,
+                'item_name', ql.item_name,
+                'quantity', ql.quantity,
+                'unit_price', ql.unit_price,
+                'total_price', ql.total_price,
+                'vat_rate', ql.vat_rate
+              ) ORDER BY ql.id
+            ) as products
+          FROM quotations q
+          LEFT JOIN quotation_lines ql ON q.id = ql.quotation_id
+          WHERE q.business_id = $1
+            AND ${dateCondition}
+          GROUP BY q.id, q.quotation_number, q.customer_name, q.created_at, 
+                   q.issue_date, q.total_amount, q.status, q.valid_until
+          ORDER BY q.created_at DESC
+        ` : `
+          SELECT 
+            q.id,
+            q.quotation_number,
+            q.customer_name,
+            q.created_at,
+            NULL as issue_date,
+            q.total_amount,
+            q.status,
+            q.valid_until,
+            json_agg(
+              json_build_object(
+                'id', ql.id,
+                'item_id', ql.item_id,
+                'item_name', ql.item_name,
+                'quantity', ql.quantity,
+                'unit_price', ql.unit_price,
+                'total_price', ql.total_price,
+                'vat_rate', ql.vat_rate
+              ) ORDER BY ql.id
+            ) as products
+          FROM quotations q
+          LEFT JOIN quotation_lines ql ON q.id = ql.quotation_id
+          WHERE q.business_id = $1
+            AND ${dateCondition}
+          GROUP BY q.id, q.quotation_number, q.customer_name, q.created_at, 
+                   q.total_amount, q.status, q.valid_until
+          ORDER BY q.created_at DESC
+        `;
+
+        const result = await client.query(quotationsQuery, [businessId]);
+        
+        const quotations = result.rows.map((row: any) => ({
+          id: row.id,
+          quotationNumber: row.quotation_number,
+          customerName: row.customer_name,
+          createdAt: row.created_at.toISOString(),
+          issueDate: row.issue_date ? row.issue_date.toISOString().split('T')[0] : null,
+          totalAmount: parseFloat(row.total_amount || 0),
+          status: row.status,
+          validUntil: row.valid_until ? row.valid_until.toISOString().split('T')[0] : null,
+          products: row.products && row.products[0]?.id ? row.products : []
+        }));
+
+        res.json({ quotations });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching all quotations:', error);
+      res.status(500).json({ error: 'Failed to fetch all quotations' });
     }
   }
 }

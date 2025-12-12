@@ -5,6 +5,17 @@ import { Quotation, QuotationLine } from '../types';
 
 const router = express.Router();
 
+// Logging middleware for quotation routes
+router.use((req, res, next) => {
+  if (req.method === 'DELETE' || req.method === 'PATCH') {
+    console.log(`📄 [QUOTATION ROUTES] ${req.method} ${req.path}`);
+    console.log(`📄 [QUOTATION ROUTES] Params:`, req.params);
+    console.log(`📄 [QUOTATION ROUTES] Query:`, req.query);
+    console.log(`📄 [QUOTATION ROUTES] Body:`, req.body);
+  }
+  next();
+});
+
 // Get all quotations for authenticated user's business
 router.get('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {
@@ -381,12 +392,21 @@ router.post('/:id/convert-to-invoice', authenticateToken, async (req: Authentica
 
 // Update quotation status
 router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  console.log('🟡 [QUOTATION STATUS UPDATE] Request received');
+  console.log('🟡 [QUOTATION STATUS UPDATE] Route: PATCH /quotations/:id/status');
+  console.log('🟡 [QUOTATION STATUS UPDATE] Params:', req.params);
+  console.log('🟡 [QUOTATION STATUS UPDATE] Body:', req.body);
+  console.log('🟡 [QUOTATION STATUS UPDATE] User:', { id: req.user?.id, business_id: req.user?.business_id });
+  
   try {
     const businessId = req.user?.business_id;
     const quotationId = req.params.id;
     const { status } = req.body;
 
+    console.log('🟡 [QUOTATION STATUS UPDATE] Processing:', { quotationId, status, businessId });
+
     if (!businessId) {
+      console.error('❌ [QUOTATION STATUS UPDATE] No business ID found');
       return res.status(400).json({
         success: false,
         message: 'No business associated with this account'
@@ -395,12 +415,14 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
 
     const validStatuses = ['draft', 'sent', 'accepted', 'rejected', 'expired'];
     if (!validStatuses.includes(status)) {
+      console.error('❌ [QUOTATION STATUS UPDATE] Invalid status:', status);
       return res.status(400).json({
         success: false,
         message: 'Invalid status'
       });
     }
 
+    console.log('🟡 [QUOTATION STATUS UPDATE] Executing database query...');
     const result = await pool.query(`
       UPDATE quotations 
       SET status = $1, updated_at = CURRENT_TIMESTAMP
@@ -408,13 +430,17 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
       RETURNING *
     `, [status, quotationId, businessId]);
 
+    console.log('🟡 [QUOTATION STATUS UPDATE] Query result:', { rowsAffected: result.rows.length });
+
     if (result.rows.length === 0) {
+      console.error('❌ [QUOTATION STATUS UPDATE] Quotation not found or already converted:', { quotationId, businessId });
       return res.status(404).json({
         success: false,
         message: 'Quotation not found or already converted'
       });
     }
 
+    console.log('✅ [QUOTATION STATUS UPDATE] Success:', result.rows[0]);
     res.json({
       success: true,
       message: 'Quotation status updated successfully',
@@ -422,10 +448,12 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
     });
 
   } catch (error) {
-    console.error('Error updating quotation status:', error);
+    console.error('❌ [QUOTATION STATUS UPDATE] Error:', error);
+    console.error('❌ [QUOTATION STATUS UPDATE] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      message: 'Failed to update quotation status'
+      message: 'Failed to update quotation status',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -562,11 +590,19 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
 // Delete quotation
 router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  console.log('🟠 [QUOTATION DELETE] Request received');
+  console.log('🟠 [QUOTATION DELETE] Route: DELETE /quotations/:id');
+  console.log('🟠 [QUOTATION DELETE] Params:', req.params);
+  console.log('🟠 [QUOTATION DELETE] User:', { id: req.user?.id, business_id: req.user?.business_id });
+  
   try {
     const businessId = req.user?.business_id;
     const quotationId = parseInt(req.params.id);
     
+    console.log('🟠 [QUOTATION DELETE] Processing:', { quotationId, businessId });
+    
     if (isNaN(quotationId)) {
+      console.error('❌ [QUOTATION DELETE] Invalid quotation ID:', req.params.id);
       return res.status(400).json({
         success: false,
         message: 'Invalid quotation ID'
@@ -574,6 +610,7 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
     }
 
     if (!businessId) {
+      console.error('❌ [QUOTATION DELETE] No business ID found');
       return res.status(400).json({
         success: false,
         message: 'No business associated with this account'
@@ -581,29 +618,36 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
     }
 
     // Delete quotation (lines will be deleted by CASCADE)
+    console.log('🟠 [QUOTATION DELETE] Executing database query...');
     const result = await pool.query(`
       DELETE FROM quotations 
       WHERE id = $1 AND business_id = $2 AND status != 'converted'
       RETURNING *
     `, [quotationId, businessId]);
 
+    console.log('🟠 [QUOTATION DELETE] Query result:', { rowsAffected: result.rows.length });
+
     if (result.rows.length === 0) {
+      console.error('❌ [QUOTATION DELETE] Quotation not found or already converted:', { quotationId, businessId });
       return res.status(404).json({
         success: false,
         message: 'Quotation not found or already converted'
       });
     }
 
+    console.log('✅ [QUOTATION DELETE] Success:', result.rows[0]);
     res.json({
       success: true,
       message: 'Quotation deleted successfully'
     });
 
   } catch (error) {
-    console.error('Error deleting quotation:', error);
+    console.error('❌ [QUOTATION DELETE] Error:', error);
+    console.error('❌ [QUOTATION DELETE] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      message: 'Failed to delete quotation'
+      message: 'Failed to delete quotation',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

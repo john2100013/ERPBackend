@@ -3,21 +3,26 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
 
-// Rate limiting
+// Rate limiting - skip OPTIONS requests (CORS preflight)
 export const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'), // limit each IP to 100 requests per windowMs
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again later.'
-  }
+  },
+  skip: (req) => req.method === 'OPTIONS' // Skip rate limiting for CORS preflight requests
 });
 
 // CORS configuration
 export const corsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    // In development, allow all localhost origins
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    
     console.log(`🔍 CORS Debug - Incoming origin: ${origin}`);
     console.log(`🔍 CORS Debug - FRONTEND_URL env: ${process.env.FRONTEND_URL}`);
+    console.log(`🔍 CORS Debug - NODE_ENV: ${process.env.NODE_ENV}`);
     
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
@@ -25,8 +30,14 @@ export const corsOptions = {
       return callback(null, true);
     }
     
+    // In development, allow all localhost and 127.0.0.1 origins
+    if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+      console.log(`✅ CORS: Allowing localhost origin in development: ${origin}`);
+      return callback(null, true);
+    }
+    
     const allowedOrigins = [
-      process.env.FRONTEND_URL || 'http://localhost:5173',
+      process.env.FRONTEND_URL,
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'https://frontend-ruby-theta-36.vercel.app', // Current production frontend
@@ -53,9 +64,12 @@ export const corsOptions = {
     'Accept',
     'Authorization',
     'Cache-Control',
-    'Pragma'
+    'Pragma',
+    'X-Requested-With'
   ],
-  exposedHeaders: ['Authorization']
+  exposedHeaders: ['Authorization'],
+  preflightContinue: false,
+  maxAge: 86400 // 24 hours
 };
 
 // Security headers

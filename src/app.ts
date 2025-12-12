@@ -34,9 +34,10 @@ const debugLog = {
 };
 
 // Security middleware
+// IMPORTANT: CORS must be applied BEFORE rate limiting to handle preflight OPTIONS requests
+app.use(cors(corsOptions));
 app.use(securityHeaders);
 app.use(limiter);
-app.use(cors(corsOptions));
 
 // Request logging middleware
 app.use((req, res, next) => {

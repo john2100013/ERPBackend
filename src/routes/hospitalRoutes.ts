@@ -50,14 +50,18 @@ router.get('/lab-tests/all', authenticateToken, HospitalController.getAllLabTest
 router.put('/lab-tests/:id/result', authenticateToken, HospitalController.updateLabTestResult);
 
 // ============ PHARMACY ROUTES ============
-// Get pending prescriptions
+// IMPORTANT: More specific routes must come before general routes
+// Get pending prescriptions (specific route - must come first)
 router.get('/prescriptions/pending', authenticateToken, HospitalController.getPendingPrescriptions);
 
-// Get prescription items
+// Get prescription items (specific route with /items - must come before /prescriptions)
 router.get('/prescriptions/:id/items', authenticateToken, HospitalController.getPrescriptionItems);
 
-// Fulfill prescription
+// Fulfill prescription (specific route with /fulfill - must come before /prescriptions)
 router.post('/prescriptions/:id/fulfill', authenticateToken, HospitalController.fulfillPrescription);
+
+// Get all prescriptions (general route - must come last)
+router.get('/prescriptions', authenticateToken, HospitalController.getAllPrescriptions);
 
 export default router;
 

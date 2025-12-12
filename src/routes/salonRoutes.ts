@@ -3,11 +3,13 @@ import { authenticateToken } from '../middleware/auth';
 import * as salonController from '../controllers/salonController';
 import * as shiftController from '../controllers/salonShiftController';
 import * as transactionController from '../controllers/salonTransactionController';
+import * as analyticsController from '../controllers/salonAnalyticsController';
 
 const router = express.Router();
 
 // Salon Users
 router.get('/users', authenticateToken, salonController.getSalonUsers);
+router.get('/users/available', authenticateToken, salonController.getAvailableUsers);
 router.post('/users', authenticateToken, salonController.createSalonUser);
 router.put('/users/:id', authenticateToken, salonController.updateSalonUser);
 
@@ -37,5 +39,13 @@ router.get('/transactions/:id', authenticateToken, transactionController.getTran
 // Performance & Analytics
 router.get('/performance/employees', authenticateToken, transactionController.getEmployeePerformance);
 router.get('/dashboard/stats', authenticateToken, transactionController.getDashboardStats);
+
+// Analytics
+router.get('/analytics/invoices', authenticateToken, analyticsController.getInvoiceAnalytics);
+router.get('/analytics/employees/services', authenticateToken, analyticsController.getEmployeeServiceAnalytics);
+router.get('/analytics/products/sales', authenticateToken, analyticsController.getProductSalesAnalytics);
+router.get('/analytics/services/sales', authenticateToken, analyticsController.getServiceSalesAnalytics);
+router.get('/analytics/performers', authenticateToken, analyticsController.getBestWorstPerformers);
+router.get('/analytics/low-stock', authenticateToken, analyticsController.getLowStockProducts);
 
 export default router;

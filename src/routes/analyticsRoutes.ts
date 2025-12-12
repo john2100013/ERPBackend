@@ -58,5 +58,15 @@ export default (pool: Pool) => {
     await analyticsController.getInventoryOverview(req, res);
   });
 
+  // All Invoices with Products
+  router.get('/all-invoices', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    await analyticsController.getAllInvoices(req, res);
+  });
+
+  // All Quotations with Products
+  router.get('/all-quotations', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    await analyticsController.getAllQuotations(req, res);
+  });
+
   return router;
 };

@@ -5,6 +5,17 @@ import { Invoice, InvoiceLine } from '../types';
 
 const router = express.Router();
 
+// Logging middleware for invoice routes
+router.use((req, res, next) => {
+  if (req.method === 'DELETE' || req.method === 'PATCH') {
+    console.log(`📋 [INVOICE ROUTES] ${req.method} ${req.path}`);
+    console.log(`📋 [INVOICE ROUTES] Params:`, req.params);
+    console.log(`📋 [INVOICE ROUTES] Query:`, req.query);
+    console.log(`📋 [INVOICE ROUTES] Body:`, req.body);
+  }
+  next();
+});
+
 // Get next invoice number
 router.get('/next-invoice-number', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {
@@ -530,7 +541,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     // Create invoice lines and update stock
     for (const line of lines) {
       // Create invoice line - ensure proper type conversion
-      const itemId = parseInt(String(line.item_id));
+      const itemId = line.item_id ? (isNaN(Number(line.item_id)) ? null : parseInt(String(line.item_id))) : null;
       const quantity = parseFloat(String(line.quantity));
       const unitPrice = parseFloat(String(line.unit_price));
       
@@ -543,12 +554,14 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
         quantity * unitPrice, line.description, line.code, line.uom
       ]);
 
-      // Update stock quantity (reduce stock for invoice)
-      await client.query(`
-        UPDATE items 
-        SET quantity = quantity - $1 
-        WHERE id = $2 AND business_id = $3
-      `, [quantity, itemId, businessId]);
+      // Update stock quantity (reduce stock for invoice) - only if item_id is provided
+      if (itemId && !isNaN(itemId)) {
+        await client.query(`
+          UPDATE items 
+          SET quantity = quantity - $1 
+          WHERE id = $2 AND business_id = $3
+        `, [quantity, itemId, businessId]);
+      }
     }
 
     // If payment is made, update financial account balance
@@ -608,12 +621,21 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
 
 // Update invoice status
 router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  console.log('🔵 [INVOICE STATUS UPDATE] Request received');
+  console.log('🔵 [INVOICE STATUS UPDATE] Route: PATCH /invoices/:id/status');
+  console.log('🔵 [INVOICE STATUS UPDATE] Params:', req.params);
+  console.log('🔵 [INVOICE STATUS UPDATE] Body:', req.body);
+  console.log('🔵 [INVOICE STATUS UPDATE] User:', { id: req.user?.id, business_id: req.user?.business_id });
+  
   try {
     const businessId = req.user?.business_id;
     const invoiceId = req.params.id;
     const { status } = req.body;
 
+    console.log('🔵 [INVOICE STATUS UPDATE] Processing:', { invoiceId, status, businessId });
+
     if (!businessId) {
+      console.error('❌ [INVOICE STATUS UPDATE] No business ID found');
       return res.status(400).json({
         success: false,
         message: 'No business associated with this account'
@@ -622,12 +644,14 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
 
     const validStatuses = ['draft', 'sent', 'paid', 'cancelled', 'overdue'];
     if (!validStatuses.includes(status)) {
+      console.error('❌ [INVOICE STATUS UPDATE] Invalid status:', status);
       return res.status(400).json({
         success: false,
         message: 'Invalid status'
       });
     }
 
+    console.log('🔵 [INVOICE STATUS UPDATE] Executing database query...');
     const result = await pool.query(`
       UPDATE invoices 
       SET status = $1, updated_at = CURRENT_TIMESTAMP
@@ -635,13 +659,17 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
       RETURNING *
     `, [status, invoiceId, businessId]);
 
+    console.log('🔵 [INVOICE STATUS UPDATE] Query result:', { rowsAffected: result.rows.length });
+
     if (result.rows.length === 0) {
+      console.error('❌ [INVOICE STATUS UPDATE] Invoice not found:', { invoiceId, businessId });
       return res.status(404).json({
         success: false,
         message: 'Invoice not found'
       });
     }
 
+    console.log('✅ [INVOICE STATUS UPDATE] Success:', result.rows[0]);
     res.json({
       success: true,
       message: 'Invoice status updated successfully',
@@ -649,23 +677,33 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
     });
 
   } catch (error) {
-    console.error('Error updating invoice status:', error);
+    console.error('❌ [INVOICE STATUS UPDATE] Error:', error);
+    console.error('❌ [INVOICE STATUS UPDATE] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      message: 'Failed to update invoice status'
+      message: 'Failed to update invoice status',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
 // Delete invoice
 router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  console.log('🔴 [INVOICE DELETE] Request received');
+  console.log('🔴 [INVOICE DELETE] Route: DELETE /invoices/:id');
+  console.log('🔴 [INVOICE DELETE] Params:', req.params);
+  console.log('🔴 [INVOICE DELETE] User:', { id: req.user?.id, business_id: req.user?.business_id });
+  
   const client = await pool.connect();
   
   try {
     const businessId = req.user?.business_id;
     const invoiceId = parseInt(req.params.id);
     
+    console.log('🔴 [INVOICE DELETE] Processing:', { invoiceId, businessId });
+    
     if (isNaN(invoiceId)) {
+      console.error('❌ [INVOICE DELETE] Invalid invoice ID:', req.params.id);
       return res.status(400).json({
         success: false,
         message: 'Invalid invoice ID'
@@ -673,21 +711,26 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
     }
 
     if (!businessId) {
+      console.error('❌ [INVOICE DELETE] No business ID found');
       return res.status(400).json({
         success: false,
         message: 'No business associated with this account'
       });
     }
 
+    console.log('🔴 [INVOICE DELETE] Starting transaction...');
     await client.query('BEGIN');
 
     // Get invoice lines to restore stock
+    console.log('🔴 [INVOICE DELETE] Fetching invoice lines...');
     const linesResult = await client.query(`
       SELECT * FROM invoice_lines WHERE invoice_id = $1
     `, [invoiceId]);
+    console.log('🔴 [INVOICE DELETE] Found lines:', linesResult.rows.length);
 
     // Restore stock quantities
     for (const line of linesResult.rows) {
+      console.log('🔴 [INVOICE DELETE] Restoring stock for item:', line.item_id, 'quantity:', line.quantity);
       await client.query(`
         UPDATE items 
         SET quantity = quantity + $1 
@@ -696,13 +739,17 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
     }
 
     // Delete invoice (lines will be deleted by CASCADE)
+    console.log('🔴 [INVOICE DELETE] Deleting invoice...');
     const result = await client.query(`
       DELETE FROM invoices 
       WHERE id = $1 AND business_id = $2
       RETURNING *
     `, [invoiceId, businessId]);
 
+    console.log('🔴 [INVOICE DELETE] Delete result:', { rowsAffected: result.rows.length });
+
     if (result.rows.length === 0) {
+      console.error('❌ [INVOICE DELETE] Invoice not found:', { invoiceId, businessId });
       await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
@@ -711,6 +758,7 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
     }
 
     await client.query('COMMIT');
+    console.log('✅ [INVOICE DELETE] Success:', result.rows[0]);
 
     res.json({
       success: true,
@@ -719,13 +767,16 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
 
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deleting invoice:', error);
+    console.error('❌ [INVOICE DELETE] Error:', error);
+    console.error('❌ [INVOICE DELETE] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      message: 'Failed to delete invoice'
+      message: 'Failed to delete invoice',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   } finally {
     client.release();
+    console.log('🔴 [INVOICE DELETE] Database client released');
   }
 });
 
