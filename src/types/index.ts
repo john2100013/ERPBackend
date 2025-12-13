@@ -47,6 +47,13 @@ export interface Item {
   // New pricing columns
   buying_price: number;
   selling_price: number;
+  // Multiple categories
+  category_id?: number | null;
+  category_1_id?: number | null;
+  category_2_id?: number | null;
+  category_name?: string | null;
+  category_1_name?: string | null;
+  category_2_name?: string | null;
 }
 
 // Invoice and Quotation Types
@@ -101,6 +108,13 @@ export interface InvoiceLine {
   description: string;
   code: string;
   uom?: string;
+  // Category fields
+  category_id?: number | null;
+  category_1_id?: number | null;
+  category_2_id?: number | null;
+  category_name?: string | null;
+  category_1_name?: string | null;
+  category_2_name?: string | null;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -115,6 +129,13 @@ export interface QuotationLine {
   description: string;
   code: string;
   uom?: string;
+  // Category fields
+  category_id?: number | null;
+  category_1_id?: number | null;
+  category_2_id?: number | null;
+  category_name?: string | null;
+  category_1_name?: string | null;
+  category_2_name?: string | null;
   created_at?: Date;
   updated_at?: Date;
 }

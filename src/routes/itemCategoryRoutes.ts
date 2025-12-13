@@ -234,4 +234,96 @@ router.delete('/:id', authenticateToken, async (req: AuthenticatedRequest, res) 
   }
 });
 
+// Get or create business custom category names
+router.get('/business/names', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    let result = await pool.query(
+      'SELECT * FROM business_custom_category_names WHERE business_id = $1',
+      [businessId]
+    );
+
+    // If not found, create default entry
+    if (result.rows.length === 0) {
+      result = await pool.query(
+        `INSERT INTO business_custom_category_names (business_id, category_1_name, category_2_name)
+         VALUES ($1, 'Category 1', 'Category 2')
+         RETURNING *`,
+        [businessId]
+      );
+    }
+
+    res.json({
+      success: true,
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error fetching business category names:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch business category names'
+    });
+  }
+});
+
+// Update business custom category names
+router.put('/business/names', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+    const { category_1_name, category_2_name } = req.body;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    // Check if entry exists
+    let result = await pool.query(
+      'SELECT * FROM business_custom_category_names WHERE business_id = $1',
+      [businessId]
+    );
+
+    if (result.rows.length === 0) {
+      // Create new entry
+      result = await pool.query(
+        `INSERT INTO business_custom_category_names (business_id, category_1_name, category_2_name)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [businessId, category_1_name || 'Category 1', category_2_name || 'Category 2']
+      );
+    } else {
+      // Update existing entry
+      result = await pool.query(
+        `UPDATE business_custom_category_names 
+         SET category_1_name = $1, category_2_name = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE business_id = $3
+         RETURNING *`,
+        [category_1_name || 'Category 1', category_2_name || 'Category 2', businessId]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Category names updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating business category names:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update business category names'
+    });
+  }
+});
+
 export default router;

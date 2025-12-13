@@ -5,7 +5,7 @@ export class ItemController {
   static async createItem(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
-      const { item_name, quantity, buying_price, selling_price, rate, unit, description, category_id, reorder_level, manufacturing_date, expiry_date } = req.body;
+      const { item_name, quantity, buying_price, selling_price, rate, unit, description, category_id, category_1_id, category_2_id, reorder_level, manufacturing_date, expiry_date } = req.body;
 
       // Validation
       if (!item_name || quantity === undefined || buying_price === undefined || selling_price === undefined) {
@@ -33,6 +33,8 @@ export class ItemController {
         unit: unit?.trim(),
         description: description?.trim(),
         category_id: category_id ? parseInt(category_id) : undefined,
+        category_1_id: category_1_id ? parseInt(category_1_id) : undefined,
+        category_2_id: category_2_id ? parseInt(category_2_id) : undefined,
         reorder_level: reorder_level ? parseInt(reorder_level) : undefined,
         manufacturing_date: manufacturing_date || undefined,
         expiry_date: expiry_date || undefined
@@ -128,7 +130,7 @@ export class ItemController {
     try {
       const businessId = (req as any).businessId;
       const itemId = parseInt(req.params.id);
-      const { item_name, quantity, rate, unit, description } = req.body;
+      const { item_name, quantity, rate, unit, description, category_id, category_1_id, category_2_id } = req.body;
 
       if (isNaN(itemId)) {
         res.status(400).json({
@@ -161,6 +163,9 @@ export class ItemController {
       if (rate !== undefined) updateData.rate = parseFloat(rate);
       if (unit !== undefined) updateData.unit = unit?.trim() || null;
       if (description !== undefined) updateData.description = description?.trim() || null;
+      if (category_id !== undefined) updateData.category_id = category_id ? parseInt(category_id) : null;
+      if (category_1_id !== undefined) updateData.category_1_id = category_1_id ? parseInt(category_1_id) : null;
+      if (category_2_id !== undefined) updateData.category_2_id = category_2_id ? parseInt(category_2_id) : null;
 
       const item = await ItemService.updateItem(businessId, itemId, updateData);
 

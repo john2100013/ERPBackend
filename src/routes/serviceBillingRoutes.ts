@@ -46,4 +46,11 @@ router.post('/assignments/:id/complete', ServiceBillingController.completeAssign
 router.get('/assignments/billing', ServiceBillingController.getAssignmentsForBilling);
 router.post('/assignments/invoice', ServiceBillingController.createInvoiceFromAssignments);
 
+// Analytics routes
+router.get('/analytics/services', ServiceBillingController.getServiceAnalytics);
+router.get('/analytics/employees', ServiceBillingController.getEmployeeAnalytics);
+router.get('/analytics/products', ServiceBillingController.getProductAnalytics);
+router.get('/analytics/performance', ServiceBillingController.getPerformanceAnalytics);
+router.get('/analytics/returning-customers', ServiceBillingController.getReturningCustomers);
+
 export default router;

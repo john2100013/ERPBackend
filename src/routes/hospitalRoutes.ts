@@ -43,6 +43,9 @@ router.get('/patient/history', authenticateToken, HospitalController.getPatientC
 // Get pending lab tests
 router.get('/lab-tests/pending', authenticateToken, HospitalController.getPendingLabTests);
 
+// Get grouped pending lab tests for lab screen
+router.get('/lab-tests/pending/grouped', authenticateToken, HospitalController.getGroupedPendingLabTests);
+
 // Get all lab tests (with search)
 router.get('/lab-tests/all', authenticateToken, HospitalController.getAllLabTests);
 
@@ -62,6 +65,25 @@ router.post('/prescriptions/:id/fulfill', authenticateToken, HospitalController.
 
 // Get all prescriptions (general route - must come last)
 router.get('/prescriptions', authenticateToken, HospitalController.getAllPrescriptions);
+
+// ============ PHARMACY LAB TEST ROUTES ============
+// Get pending lab tests for pharmacy billing
+router.get('/lab-tests/pharmacy/pending', authenticateToken, HospitalController.getPendingLabTestsForPharmacy);
+
+// Get grouped pending lab tests for pharmacy billing
+router.get('/lab-tests/pharmacy/pending/grouped', authenticateToken, HospitalController.getGroupedPendingLabTestsForPharmacy);
+
+// Get all lab tests for pharmacy (with filters)
+router.get('/lab-tests/pharmacy/all', authenticateToken, HospitalController.getAllLabTestsForPharmacy);
+
+// Bill lab tests
+router.post('/lab-tests/pharmacy/bill', authenticateToken, HospitalController.billLabTests);
+
+// Get lab test analytics
+router.get('/lab-tests/analytics', authenticateToken, HospitalController.getLabTestAnalytics);
+
+// Get hospital analytics
+router.get('/analytics', authenticateToken, HospitalController.getHospitalAnalytics);
 
 export default router;
 

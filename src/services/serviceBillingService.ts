@@ -534,21 +534,69 @@ export class ServiceBillingService {
   }
 
   static async getAssignmentsForBilling(businessId: number) {
-    const result = await pool.query(
-      `SELECT ca.*, 
-              c.name as customer_name, c.phone as customer_phone,
-              e.name as employee_name,
-              s.service_name, s.price as service_price,
-              EXTRACT(EPOCH FROM (COALESCE(ca.end_time, CURRENT_TIMESTAMP) - ca.start_time))/60 as actual_duration
-       FROM customer_assignments ca
-       LEFT JOIN service_customers c ON ca.customer_id = c.id
-       LEFT JOIN employees e ON ca.employee_id = e.id
-       LEFT JOIN services s ON ca.service_id = s.id
-       WHERE ca.business_id = $1 AND ca.status != 'billed'
-       ORDER BY ca.start_time DESC`,
-      [businessId]
-    );
-    return result.rows;
+    try {
+      console.log('📋 [ServiceBillingService] getAssignmentsForBilling: businessId =', businessId);
+      
+      const result = await pool.query(
+        `SELECT ca.*, 
+                c.name as customer_name, c.phone as customer_phone,
+                e.name as employee_name,
+                s.service_name, s.price as service_price,
+                EXTRACT(EPOCH FROM (COALESCE(ca.end_time, CURRENT_TIMESTAMP) - ca.start_time))/60 as actual_duration
+         FROM customer_assignments ca
+         LEFT JOIN service_customers c ON ca.customer_id = c.id AND c.business_id = ca.business_id
+         LEFT JOIN employees e ON ca.employee_id = e.id AND e.business_id = ca.business_id
+         LEFT JOIN services s ON ca.service_id = s.id AND s.business_id = ca.business_id
+         WHERE ca.business_id = $1 AND ca.status != 'billed'
+         ORDER BY ca.start_time DESC`,
+        [businessId]
+      );
+      
+      console.log('✅ [ServiceBillingService] getAssignmentsForBilling: found', result.rows.length, 'assignments');
+      return result.rows;
+    } catch (error: any) {
+      console.error('❌ [ServiceBillingService] getAssignmentsForBilling error:', error);
+      throw error;
+    }
+  }
+
+  // Get the next service invoice number candidate
+  // This function must be called within a transaction with advisory lock already held
+  static async getNextServiceInvoiceNumberCandidate(
+    businessId: number, 
+    client: any,
+    startCount?: number
+  ): Promise<{ number: string; nextCount: number }> {
+    const prefix = 'SRV-';
+    
+    let count: number;
+    
+    if (startCount !== undefined) {
+      // Use provided starting count (for retries)
+      count = startCount;
+    } else {
+      // Get the maximum invoice number
+      const result = await client.query(
+        `SELECT invoice_number FROM service_invoices 
+         WHERE business_id = $1 AND invoice_number LIKE $2 
+         ORDER BY invoice_number DESC LIMIT 1`,
+        [businessId, `${prefix}%`]
+      );
+      
+      // Start from 1 or increment from the last number
+      count = 1;
+      if (result.rows.length > 0) {
+        const lastNumber = result.rows[0].invoice_number;
+        const sequencePart = lastNumber.replace(prefix, '');
+        const lastCount = parseInt(sequencePart, 10);
+        if (!isNaN(lastCount)) {
+          count = lastCount + 1;
+        }
+      }
+    }
+    
+    const number = `${prefix}${String(count).padStart(5, '0')}`;
+    return { number, nextCount: count + 1 };
   }
 
   static async createInvoiceFromAssignments(businessId: number, data: {
@@ -560,6 +608,19 @@ export class ServiceBillingService {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Use advisory lock to serialize number generation - this blocks other transactions
+      // Use businessId and a fixed identifier for service invoices
+      const lockId = businessId * 1000 + 1; // Unique identifier for service invoices
+      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+
+      // Lock ALL existing service invoice numbers to prevent concurrent modifications
+      await client.query(
+        `SELECT invoice_number FROM service_invoices 
+         WHERE business_id = $1 AND invoice_number LIKE $2 
+         FOR UPDATE`,
+        [businessId, 'SRV-%']
+      );
 
       // Get assignment details
       const assignmentsResult = await client.query(
@@ -577,47 +638,76 @@ export class ServiceBillingService {
         throw new Error('No unbilled assignments found');
       }
 
-      // Calculate totals
-      const subtotal = assignments.reduce((sum, a) => sum + Number(a.price), 0);
-      const vatAmount = subtotal * 0.16;
-      const totalAmount = subtotal + vatAmount;
+      // Calculate totals and round to nearest whole number
+      const subtotal = Math.round(assignments.reduce((sum, a) => sum + Number(a.price), 0));
+      const vatAmount = Math.round(subtotal * 0.16);
+      const totalAmount = Math.round(subtotal + vatAmount);
 
-      // Generate invoice number
-      const invoiceNumberResult = await client.query(
-        `SELECT invoice_number FROM service_invoices 
-         WHERE business_id = $1 
-         ORDER BY id DESC LIMIT 1`,
-        [businessId]
-      );
+      // Try to insert with retry logic for duplicate key errors
+      // Use SAVEPOINTs to handle errors without aborting the entire transaction
+      const maxAttempts = 50;
+      let invoiceNumber: string | null = null;
+      let invoiceResult: any = null;
+      let nextCount: number | undefined = undefined;
 
-      let nextNumber = 1;
-      if (invoiceNumberResult.rows.length > 0) {
-        const lastNumber = invoiceNumberResult.rows[0].invoice_number;
-        if (lastNumber.startsWith('SRV-')) {
-          nextNumber = parseInt(lastNumber.replace('SRV-', '')) + 1;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        // Create a savepoint before each attempt
+        const savepointName = `sp_attempt_${attempt}`;
+        try {
+          await client.query(`SAVEPOINT ${savepointName}`);
+          
+          // Get next invoice number candidate
+          const candidate = await ServiceBillingService.getNextServiceInvoiceNumberCandidate(businessId, client, nextCount);
+          invoiceNumber = candidate.number;
+          nextCount = candidate.nextCount;
+          
+          // Try to insert
+          invoiceResult = await client.query(
+            `INSERT INTO service_invoices 
+             (business_id, invoice_number, customer_id, subtotal, vat_amount, total_amount, payment_status, payment_method, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, 'paid', $7, $8) RETURNING *`,
+            [businessId, invoiceNumber, data.customer_id, subtotal, vatAmount, totalAmount, 
+             data.payment_method || 'Cash', data.notes]
+          );
+          
+          // Success! Release savepoint and break out of loop
+          await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+          break;
+        } catch (insertError: any) {
+          // Rollback to savepoint to recover from the error
+          await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+          
+          // If it's a duplicate key error, try again with next number
+          if (insertError.code === '23505' && insertError.constraint === 'service_invoices_invoice_number_key') {
+            if (attempt < maxAttempts - 1) {
+              // Continue to next iteration with incremented count
+              continue;
+            } else {
+              throw new Error(`Failed to generate unique service invoice number after ${maxAttempts} attempts`);
+            }
+          } else {
+            // Some other error, rethrow
+            throw insertError;
+          }
         }
       }
-      const invoiceNumber = `SRV-${String(nextNumber).padStart(5, '0')}`;
 
-      // Create invoice
-      const invoiceResult = await client.query(
-        `INSERT INTO service_invoices 
-         (business_id, invoice_number, customer_id, subtotal, vat_amount, total_amount, payment_status, payment_method, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, 'paid', $7, $8) RETURNING *`,
-        [businessId, invoiceNumber, data.customer_id, subtotal, vatAmount, totalAmount, 
-         data.payment_method || 'Cash', data.notes]
-      );
+      if (!invoiceResult || !invoiceNumber) {
+        throw new Error('Failed to create service invoice');
+      }
+
       const invoice = invoiceResult.rows[0];
 
       // Create invoice lines from assignments
       for (const assignment of assignments) {
+        const roundedPrice = Math.round(Number(assignment.price));
         await client.query(
           `INSERT INTO service_invoice_lines 
            (invoice_id, service_id, employee_id, service_name, duration, price, amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [invoice.id, assignment.service_id, assignment.employee_id, assignment.service_name, 
            Math.round(assignment.actual_duration || assignment.estimated_duration), 
-           assignment.price, assignment.price]
+           roundedPrice, roundedPrice]
         );
       }
 
@@ -637,5 +727,440 @@ export class ServiceBillingService {
     } finally {
       client.release();
     }
+  }
+
+  // ==================== ANALYTICS ====================
+
+  // Get service analytics (services done, total amount per service)
+  static async getServiceAnalytics(businessId: number, startDate?: string, endDate?: string) {
+    const params: any[] = [businessId];
+    let paramIndex = 2;
+    let dateFilter = '';
+    
+    if (startDate && endDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex} AND inv.created_at <= $${paramIndex + 1}`;
+      params.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex += 1;
+    } else if (endDate) {
+      dateFilter = ` AND inv.created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex += 1;
+    }
+
+    const result = await pool.query(
+      `SELECT 
+        il.description,
+        CASE 
+          WHEN il.description ~ 'Service: ([^(]+)' THEN 
+            TRIM(SUBSTRING(il.description FROM 'Service: ([^(]+)'))
+          ELSE il.description
+        END as service_name,
+        COUNT(*) as service_count,
+        SUM(il.quantity) as total_quantity,
+        SUM(il.total) as total_amount,
+        AVG(il.unit_price) as avg_price
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NULL 
+         AND il.description LIKE 'Service:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY il.description, service_name
+       ORDER BY total_amount DESC`,
+      params
+    );
+    return result.rows;
+  }
+
+  // Get employee analytics (customers serviced, services done, totals)
+  static async getEmployeeAnalytics(businessId: number, startDate?: string, endDate?: string) {
+    const params: any[] = [businessId];
+    let paramIndex = 2;
+    let dateFilter = '';
+    
+    if (startDate && endDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex} AND inv.created_at <= $${paramIndex + 1}`;
+      params.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex += 1;
+    } else if (endDate) {
+      dateFilter = ` AND inv.created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex += 1;
+    }
+
+    // Extract employee name from description: "Service: Service Name (by Employee Name)"
+    const result = await pool.query(
+      `SELECT 
+        CASE 
+          WHEN il.description ~ 'by ([^)]+)' THEN 
+            SUBSTRING(il.description FROM 'by ([^)]+)')
+          ELSE 'Unknown'
+        END as employee_name,
+        COUNT(DISTINCT inv.customer_name) as customer_count,
+        COUNT(*) as service_count,
+        SUM(il.total) as total_amount,
+        COUNT(DISTINCT il.description) as unique_services
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NULL 
+         AND il.description LIKE 'Service:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY employee_name
+       ORDER BY total_amount DESC`,
+      params
+    );
+
+    // Get detailed customer list and services for each employee
+    const employees = await Promise.all(result.rows.map(async (emp) => {
+      const employeeName = emp.employee_name;
+      
+      // Build params for employee-specific queries
+      const employeeParams: any[] = [businessId, `%by ${employeeName}%`];
+      let employeeParamIndex = 3;
+      let employeeDateFilter = '';
+      
+      if (startDate && endDate) {
+        employeeDateFilter = ` AND inv.created_at >= $${employeeParamIndex} AND inv.created_at <= $${employeeParamIndex + 1}`;
+        employeeParams.push(startDate, endDate);
+        employeeParamIndex += 2;
+      } else if (startDate) {
+        employeeDateFilter = ` AND inv.created_at >= $${employeeParamIndex}`;
+        employeeParams.push(startDate);
+        employeeParamIndex += 1;
+      } else if (endDate) {
+        employeeDateFilter = ` AND inv.created_at <= $${employeeParamIndex}`;
+        employeeParams.push(endDate);
+        employeeParamIndex += 1;
+      }
+      
+      // Get customers serviced by this employee
+      const customersResult = await pool.query(
+        `SELECT DISTINCT 
+          inv.customer_name,
+          inv.customer_address,
+          COUNT(DISTINCT inv.id) as visit_count,
+          SUM(il.total) as total_spent
+         FROM invoice_lines il
+         JOIN invoices inv ON il.invoice_id = inv.id
+         WHERE inv.business_id = $1 
+           AND il.item_id IS NULL 
+           AND il.description LIKE 'Service:%'
+           AND il.description LIKE $2
+           AND inv.status IN ('paid', 'partial', 'completed')
+           ${employeeDateFilter}
+         GROUP BY inv.customer_name, inv.customer_address
+         ORDER BY total_spent DESC`,
+        employeeParams
+      );
+
+      // Get services done by this employee
+      const servicesResult = await pool.query(
+        `SELECT 
+          il.description,
+          il.unit_price,
+          COUNT(*) as count,
+          SUM(il.total) as total
+         FROM invoice_lines il
+         JOIN invoices inv ON il.invoice_id = inv.id
+         WHERE inv.business_id = $1 
+           AND il.item_id IS NULL 
+           AND il.description LIKE 'Service:%'
+           AND il.description LIKE $2
+           AND inv.status IN ('paid', 'partial', 'completed')
+           ${employeeDateFilter}
+         GROUP BY il.description, il.unit_price
+         ORDER BY total DESC`,
+        employeeParams
+      );
+
+      return {
+        ...emp,
+        customers: customersResult.rows,
+        services: servicesResult.rows
+      };
+    }));
+
+    return employees;
+  }
+
+  // Get product analytics
+  static async getProductAnalytics(businessId: number, startDate?: string, endDate?: string) {
+    const params: any[] = [businessId];
+    let paramIndex = 2;
+    let dateFilter = '';
+    
+    if (startDate && endDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex} AND inv.created_at <= $${paramIndex + 1}`;
+      params.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex += 1;
+    } else if (endDate) {
+      dateFilter = ` AND inv.created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex += 1;
+    }
+
+    const result = await pool.query(
+      `SELECT 
+        i.id as item_id,
+        COALESCE(i.name, il.description) as product_name,
+        SUM(il.quantity) as total_quantity,
+        SUM(il.total) as total_amount,
+        AVG(il.unit_price) as avg_price,
+        COUNT(*) as sale_count
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       LEFT JOIN items i ON il.item_id = i.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NOT NULL
+         AND il.description LIKE 'Product:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY i.id, i.name, il.description
+       ORDER BY total_amount DESC`,
+      params
+    );
+    return result.rows;
+  }
+
+  // Get performance analytics (top employees, best/worst services and products)
+  static async getPerformanceAnalytics(businessId: number, startDate?: string, endDate?: string) {
+    const params: any[] = [businessId];
+    let paramIndex = 2;
+    let dateFilter = '';
+    
+    if (startDate && endDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex} AND inv.created_at <= $${paramIndex + 1}`;
+      params.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex += 1;
+    } else if (endDate) {
+      dateFilter = ` AND inv.created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex += 1;
+    }
+
+    // Top performing employees
+    const topEmployeesResult = await pool.query(
+      `SELECT 
+        CASE 
+          WHEN il.description ~ 'by ([^)]+)' THEN 
+            SUBSTRING(il.description FROM 'by ([^)]+)')
+          ELSE 'Unknown'
+        END as employee_name,
+        COUNT(DISTINCT inv.customer_name) as customer_count,
+        SUM(il.total) as total_amount
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NULL 
+         AND il.description LIKE 'Service:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY employee_name
+       ORDER BY total_amount DESC
+       LIMIT 10`,
+      params
+    );
+
+    // Get customer details for top employees
+    const topEmployees = await Promise.all(topEmployeesResult.rows.map(async (emp) => {
+      const employeeName = emp.employee_name;
+      
+      // Build params for employee-specific queries
+      const employeeParams: any[] = [businessId, `%by ${employeeName}%`];
+      let employeeParamIndex = 3;
+      let employeeDateFilter = '';
+      
+      if (startDate && endDate) {
+        employeeDateFilter = ` AND inv.created_at >= $${employeeParamIndex} AND inv.created_at <= $${employeeParamIndex + 1}`;
+        employeeParams.push(startDate, endDate);
+        employeeParamIndex += 2;
+      } else if (startDate) {
+        employeeDateFilter = ` AND inv.created_at >= $${employeeParamIndex}`;
+        employeeParams.push(startDate);
+        employeeParamIndex += 1;
+      } else if (endDate) {
+        employeeDateFilter = ` AND inv.created_at <= $${employeeParamIndex}`;
+        employeeParams.push(endDate);
+        employeeParamIndex += 1;
+      }
+      
+      const customersResult = await pool.query(
+        `SELECT DISTINCT 
+          inv.customer_name,
+          inv.customer_address,
+          COUNT(DISTINCT inv.id) as visit_count,
+          SUM(il.total) as total_spent
+         FROM invoice_lines il
+         JOIN invoices inv ON il.invoice_id = inv.id
+         WHERE inv.business_id = $1 
+           AND il.item_id IS NULL 
+           AND il.description LIKE 'Service:%'
+           AND il.description LIKE $2
+           AND inv.status IN ('paid', 'partial', 'completed')
+           ${employeeDateFilter}
+         GROUP BY inv.customer_name, inv.customer_address
+         ORDER BY total_spent DESC`,
+        employeeParams
+      );
+      return {
+        ...emp,
+        customers: customersResult.rows
+      };
+    }));
+
+    // Best performing service
+    const bestServiceResult = await pool.query(
+      `SELECT 
+        il.description,
+        COUNT(*) as service_count,
+        SUM(il.total) as total_amount
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NULL 
+         AND il.description LIKE 'Service:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY il.description
+       ORDER BY total_amount DESC
+       LIMIT 1`,
+      params
+    );
+
+    // Worst performing service
+    const worstServiceResult = await pool.query(
+      `SELECT 
+        il.description,
+        COUNT(*) as service_count,
+        SUM(il.total) as total_amount
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NULL 
+         AND il.description LIKE 'Service:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY il.description
+       ORDER BY total_amount ASC
+       LIMIT 1`,
+      params
+    );
+
+    // Best performing product
+    const bestProductResult = await pool.query(
+      `SELECT 
+        i.id as item_id,
+        COALESCE(i.name, il.description) as product_name,
+        SUM(il.quantity) as total_quantity,
+        SUM(il.total) as total_amount
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       LEFT JOIN items i ON il.item_id = i.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NOT NULL
+         AND il.description LIKE 'Product:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY i.id, i.name, il.description
+       ORDER BY total_amount DESC
+       LIMIT 1`,
+      params
+    );
+
+    // Worst performing product
+    const worstProductResult = await pool.query(
+      `SELECT 
+        i.id as item_id,
+        COALESCE(i.name, il.description) as product_name,
+        SUM(il.quantity) as total_quantity,
+        SUM(il.total) as total_amount
+       FROM invoice_lines il
+       JOIN invoices inv ON il.invoice_id = inv.id
+       LEFT JOIN items i ON il.item_id = i.id
+       WHERE inv.business_id = $1 
+         AND il.item_id IS NOT NULL
+         AND il.description LIKE 'Product:%'
+         AND inv.status IN ('paid', 'partial', 'completed')
+         ${dateFilter}
+       GROUP BY i.id, i.name, il.description
+       ORDER BY total_amount ASC
+       LIMIT 1`,
+      params
+    );
+
+    return {
+      top_employees: topEmployees,
+      best_service: bestServiceResult.rows[0] || null,
+      worst_service: worstServiceResult.rows[0] || null,
+      best_product: bestProductResult.rows[0] || null,
+      worst_product: worstProductResult.rows[0] || null
+    };
+  }
+
+  // Get returning customers (identified by phone number)
+  static async getReturningCustomers(businessId: number, startDate?: string, endDate?: string) {
+    const params: any[] = [businessId];
+    let paramIndex = 2;
+    let dateFilter = '';
+    
+    if (startDate && endDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex} AND inv.created_at <= $${paramIndex + 1}`;
+      params.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      dateFilter = ` AND inv.created_at >= $${paramIndex}`;
+      params.push(startDate);
+      paramIndex += 1;
+    } else if (endDate) {
+      dateFilter = ` AND inv.created_at <= $${paramIndex}`;
+      params.push(endDate);
+      paramIndex += 1;
+    }
+
+    // Extract phone number from customer_address (format: "Phone: 1234567890")
+    const result = await pool.query(
+      `SELECT 
+        inv.customer_name,
+        CASE 
+          WHEN inv.customer_address LIKE 'Phone:%' THEN 
+            TRIM(REPLACE(inv.customer_address, 'Phone:', ''))
+          ELSE inv.customer_address
+        END as phone_number,
+        COUNT(DISTINCT inv.id) as visit_count,
+        SUM(inv.total_amount) as total_spent,
+        MIN(inv.created_at) as first_visit,
+        MAX(inv.created_at) as last_visit,
+        COUNT(DISTINCT DATE(inv.created_at)) as unique_days
+       FROM invoices inv
+       WHERE inv.business_id = $1 
+         AND inv.status IN ('paid', 'partial', 'completed')
+         AND inv.customer_address IS NOT NULL
+         AND inv.customer_address != ''
+         ${dateFilter}
+       GROUP BY inv.customer_name, phone_number
+       HAVING COUNT(DISTINCT inv.id) > 1
+       ORDER BY visit_count DESC, total_spent DESC`,
+      params
+    );
+    return result.rows;
   }
 }

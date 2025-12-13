@@ -284,20 +284,100 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
 
     // Create invoice lines
     for (const item of items) {
-      await client.query(`
-        INSERT INTO invoice_lines (
-          invoice_id, item_id, quantity, unit_price, total, description, code, uom
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        invoice.id,
-        item.id || null,
-        item.quantity,
-        item.rate,
-        item.amount,
-        item.name,
-        item.code || '',
-        item.unit || 'PCS'
-      ]);
+      const itemId = item.id ? (isNaN(Number(item.id)) ? null : parseInt(String(item.id))) : null;
+      
+      // Fetch item category information if item_id is provided
+      let categoryData = {
+        category_id: null,
+        category_1_id: null,
+        category_2_id: null,
+        category_name: null,
+        category_1_name: null,
+        category_2_name: null
+      };
+
+      if (itemId && !isNaN(itemId)) {
+        try {
+          const itemResult = await client.query(`
+            SELECT 
+              i.category_id,
+              i.category_1_id,
+              i.category_2_id,
+              ic.name as category_name,
+              ic1.name as category_1_name,
+              ic2.name as category_2_name
+            FROM items i
+            LEFT JOIN item_categories ic ON i.category_id = ic.id
+            LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id
+            LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id
+            WHERE i.id = $1 AND i.business_id = $2
+          `, [itemId, businessId]);
+
+          if (itemResult.rows.length > 0) {
+            const itemRow = itemResult.rows[0];
+            categoryData = {
+              category_id: itemRow.category_id || null,
+              category_1_id: itemRow.category_1_id || null,
+              category_2_id: itemRow.category_2_id || null,
+              category_name: itemRow.category_name || null,
+              category_1_name: itemRow.category_1_name || null,
+              category_2_name: itemRow.category_2_name || null
+            };
+          }
+        } catch (err) {
+          console.error('Error fetching item categories:', err);
+        }
+      }
+
+      // Check if category columns exist
+      const columnCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'invoice_lines'
+          AND column_name = 'category_id'
+        );
+      `);
+      const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryColumns) {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom,
+            category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `, [
+          invoice.id,
+          itemId,
+          item.quantity,
+          item.rate,
+          item.amount,
+          item.name,
+          item.code || '',
+          item.unit || 'PCS',
+          categoryData.category_id,
+          categoryData.category_1_id,
+          categoryData.category_2_id,
+          categoryData.category_name,
+          categoryData.category_1_name,
+          categoryData.category_2_name
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          invoice.id,
+          itemId,
+          item.quantity,
+          item.rate,
+          item.amount,
+          item.name,
+          item.code || '',
+          item.unit || 'PCS'
+        ]);
+      }
     }
 
     await client.query('COMMIT');
@@ -545,14 +625,83 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       const quantity = parseFloat(String(line.quantity));
       const unitPrice = parseFloat(String(line.unit_price));
       
-      await client.query(`
-        INSERT INTO invoice_lines (
-          invoice_id, item_id, quantity, unit_price, total, description, code, uom
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        invoice.id, itemId, quantity, unitPrice,
-        quantity * unitPrice, line.description, line.code, line.uom
-      ]);
+      // Fetch item category information if item_id is provided
+      let categoryData = {
+        category_id: null,
+        category_1_id: null,
+        category_2_id: null,
+        category_name: null,
+        category_1_name: null,
+        category_2_name: null
+      };
+
+      if (itemId && !isNaN(itemId)) {
+        try {
+          const itemResult = await client.query(`
+            SELECT 
+              i.category_id,
+              i.category_1_id,
+              i.category_2_id,
+              ic.name as category_name,
+              ic1.name as category_1_name,
+              ic2.name as category_2_name
+            FROM items i
+            LEFT JOIN item_categories ic ON i.category_id = ic.id
+            LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id
+            LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id
+            WHERE i.id = $1 AND i.business_id = $2
+          `, [itemId, businessId]);
+
+          if (itemResult.rows.length > 0) {
+            const item = itemResult.rows[0];
+            categoryData = {
+              category_id: item.category_id || null,
+              category_1_id: item.category_1_id || null,
+              category_2_id: item.category_2_id || null,
+              category_name: item.category_name || null,
+              category_1_name: item.category_1_name || null,
+              category_2_name: item.category_2_name || null
+            };
+          }
+        } catch (err) {
+          console.error('Error fetching item categories:', err);
+          // Continue without category data if there's an error
+        }
+      }
+      
+      // Check if category columns exist in invoice_lines table
+      const columnCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'invoice_lines'
+          AND column_name = 'category_id'
+        );
+      `);
+      const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryColumns) {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom,
+            category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `, [
+          invoice.id, itemId, quantity, unitPrice,
+          quantity * unitPrice, line.description, line.code, line.uom,
+          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
+          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          invoice.id, itemId, quantity, unitPrice,
+          quantity * unitPrice, line.description, line.code, line.uom
+        ]);
+      }
 
       // Update stock quantity (reduce stock for invoice) - only if item_id is provided
       if (itemId && !isNaN(itemId)) {
@@ -861,17 +1010,20 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
     const updatedInvoice = invoiceResult.rows[0];
 
-    // First, restore stock quantities for old lines
+    // First, restore stock quantities for old lines (only for products, not services)
     const oldLines = await client.query(`
-      SELECT item_id, quantity FROM invoice_lines WHERE invoice_id = $1
+      SELECT item_id, quantity FROM invoice_lines WHERE invoice_id = $1 AND item_id IS NOT NULL
     `, [invoiceId]);
 
     for (const oldLine of oldLines.rows) {
-      await client.query(`
-        UPDATE items 
-        SET quantity = quantity + $1 
-        WHERE id = $2 AND business_id = $3
-      `, [parseFloat(oldLine.quantity), parseInt(oldLine.item_id), businessId]);
+      const itemId = parseInt(String(oldLine.item_id));
+      if (!isNaN(itemId) && itemId > 0) {
+        await client.query(`
+          UPDATE items 
+          SET quantity = quantity + $1 
+          WHERE id = $2 AND business_id = $3
+        `, [parseFloat(oldLine.quantity) || 0, itemId, businessId]);
+      }
     }
 
     // Delete old invoice lines
@@ -879,9 +1031,18 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
     // Create new invoice lines and update stock
     for (const line of lines) {
-      const itemId = parseInt(String(line.item_id));
-      const quantity = parseFloat(String(line.quantity));
-      const unitPrice = parseFloat(String(line.unit_price));
+      // Handle item_id - can be null for services
+      // Check if item_id exists and is a valid number
+      let itemId: number | null = null;
+      if (line.item_id !== null && line.item_id !== undefined && line.item_id !== 'null' && line.item_id !== '') {
+        const parsed = parseInt(String(line.item_id), 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          itemId = parsed;
+        }
+      }
+      
+      const quantity = parseFloat(String(line.quantity)) || 0;
+      const unitPrice = parseFloat(String(line.unit_price)) || 0;
       
       // Create new invoice line
       await client.query(`
@@ -890,15 +1051,17 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `, [
         invoiceId, itemId, quantity, unitPrice,
-        quantity * unitPrice, line.description, line.code, line.uom
+        quantity * unitPrice, line.description || '', line.code || '', line.uom || ''
       ]);
 
-      // Update stock quantity (reduce stock for updated invoice)
-      await client.query(`
-        UPDATE items 
-        SET quantity = quantity - $1 
-        WHERE id = $2 AND business_id = $3
-      `, [quantity, itemId, businessId]);
+      // Update stock quantity (reduce stock for updated invoice) - only for products, not services
+      if (itemId !== null && itemId > 0) {
+        await client.query(`
+          UPDATE items 
+          SET quantity = quantity - $1 
+          WHERE id = $2 AND business_id = $3
+        `, [quantity, itemId, businessId]);
+      }
     }
 
     await client.query('COMMIT');

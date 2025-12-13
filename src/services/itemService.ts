@@ -11,11 +11,13 @@ export class ItemService {
     unit?: string;
     description?: string;
     category_id?: number;
+    category_1_id?: number;
+    category_2_id?: number;
     reorder_level?: number;
     manufacturing_date?: string;
     expiry_date?: string;
   }): Promise<Item> {
-    const { item_name, quantity, buying_price, selling_price, unit, description, category_id, reorder_level, manufacturing_date, expiry_date } = itemData;
+    const { item_name, quantity, buying_price, selling_price, unit, description, category_id, category_1_id, category_2_id, reorder_level, manufacturing_date, expiry_date } = itemData;
     
     // Use selling_price as price (matching database schema)
     const itemPrice = selling_price;
@@ -31,7 +33,63 @@ export class ItemService {
     `);
     const hasReorderLevel = columnCheck.rows[0]?.exists || false;
 
-    if (hasReorderLevel) {
+    // Check if category_1_id and category_2_id columns exist
+    const category1Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'items'
+        AND column_name = 'category_1_id'
+      );
+    `);
+    const hasCategory1 = category1Check.rows[0]?.exists || false;
+
+    if (hasReorderLevel && hasCategory1) {
+      const result = await pool.query(
+        `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, category_1_id, category_2_id, reorder_level, manufacturing_date, expiry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         RETURNING *`,
+        [
+          businessId, 
+          item_name, 
+          quantity, 
+          buying_price,
+          selling_price,
+          itemPrice,
+          description || '',
+          unit || 'PCS',
+          category_id || null,
+          category_1_id || null,
+          category_2_id || null,
+          reorder_level || 10,
+          manufacturing_date || null,
+          expiry_date || null
+        ]
+      );
+      return this.transformItem(result.rows[0]);
+    } else if (hasCategory1) {
+      const result = await pool.query(
+        `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, category_1_id, category_2_id, manufacturing_date, expiry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         RETURNING *`,
+        [
+          businessId, 
+          item_name, 
+          quantity, 
+          buying_price,
+          selling_price,
+          itemPrice,
+          description || '',
+          unit || 'PCS',
+          category_id || null,
+          category_1_id || null,
+          category_2_id || null,
+          manufacturing_date || null,
+          expiry_date || null
+        ]
+      );
+      return this.transformItem(result.rows[0]);
+    } else if (hasReorderLevel) {
       const result = await pool.query(
         `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, reorder_level, manufacturing_date, expiry_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -44,9 +102,9 @@ export class ItemService {
           selling_price,
           itemPrice,
           description || '',
-          unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
+          unit || 'PCS',
           category_id || null,
-          reorder_level || 10, // Default to 10 if not provided
+          reorder_level || 10,
           manufacturing_date || null,
           expiry_date || null
         ]
@@ -65,7 +123,7 @@ export class ItemService {
           selling_price,
           itemPrice,
           description || '',
-          unit || 'PCS', // Use the unit provided by user, or default to 'PCS'
+          unit || 'PCS',
           category_id || null,
           manufacturing_date || null,
           expiry_date || null
@@ -96,7 +154,11 @@ export class ItemService {
       quantity: row.quantity || 0,
       amount: (row.quantity || 0) * parseFloat(row.price || 0),
       buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
-      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price || 0)
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price || 0),
+      // Multiple categories
+      category_id: row.category_id || null,
+      category_1_id: row.category_1_id || null,
+      category_2_id: row.category_2_id || null
     };
   }
 
@@ -117,14 +179,14 @@ export class ItemService {
 
     const offset = (page - 1) * limit;
     
-    let whereClause = 'WHERE business_id = $1';
+    let whereClause = 'WHERE i.business_id = $1';
     const queryParams: any[] = [businessId];
     let paramCount = 1;
 
     // Add search filter
     if (search) {
       paramCount++;
-      whereClause += ` AND (name ILIKE $${paramCount} OR description ILIKE $${paramCount})`;
+      whereClause += ` AND (i.name ILIKE $${paramCount} OR i.description ILIKE $${paramCount})`;
       queryParams.push(`%${search}%`);
     }
 
@@ -137,18 +199,28 @@ export class ItemService {
     console.log(`📦 ItemService - Where clause: ${whereClause}`);
     console.log(`📦 ItemService - Query params:`, queryParams);
 
-    // Get total count
+    // Get total count (using items table only for count)
     const countResult = await pool.query(
-      `SELECT COUNT(*) FROM items ${whereClause}`,
+      `SELECT COUNT(*) FROM items i ${whereClause}`,
       queryParams
     );
     const total = parseInt(countResult.rows[0].count);
     console.log(`📦 ItemService - Total items found: ${total}`);
 
-    // Get items
-    const itemsQuery = `SELECT * FROM items ${whereClause}
-       ORDER BY ${validSortBy} ${validSortOrder}
-       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+    // Get items with category information
+    const itemsQuery = `
+      SELECT 
+        i.*,
+        ic.name as category_name,
+        ic1.name as category_1_name,
+        ic2.name as category_2_name
+      FROM items i
+      LEFT JOIN item_categories ic ON i.category_id = ic.id AND ic.business_id = i.business_id
+      LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id AND ic1.business_id = i.business_id
+      LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id AND ic2.business_id = i.business_id
+      ${whereClause}
+      ORDER BY i.${validSortBy} ${validSortOrder}
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     
     console.log(`📦 ItemService - Items query: ${itemsQuery}`);
     console.log(`📦 ItemService - Items query params:`, [...queryParams, limit, offset]);
@@ -182,7 +254,14 @@ export class ItemService {
       quantity: row.quantity,
       amount: row.quantity * parseFloat(row.price), // Calculate amount
       buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
-      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price),
+      // Multiple categories
+      category_id: row.category_id || null,
+      category_1_id: row.category_1_id || null,
+      category_2_id: row.category_2_id || null,
+      category_name: row.category_name || null,
+      category_1_name: row.category_1_name || null,
+      category_2_name: row.category_2_name || null
     }));
 
     return {
@@ -195,7 +274,16 @@ export class ItemService {
 
   static async getItemById(businessId: number, itemId: number): Promise<Item | null> {
     const result = await pool.query(
-      'SELECT * FROM items WHERE id = $1 AND business_id = $2',
+      `SELECT 
+        i.*,
+        ic.name as category_name,
+        ic1.name as category_1_name,
+        ic2.name as category_2_name
+      FROM items i
+      LEFT JOIN item_categories ic ON i.category_id = ic.id AND ic.business_id = i.business_id
+      LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id AND ic1.business_id = i.business_id
+      LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id AND ic2.business_id = i.business_id
+      WHERE i.id = $1 AND i.business_id = $2`,
       [itemId, businessId]
     );
 
@@ -225,7 +313,14 @@ export class ItemService {
       quantity: row.quantity,
       amount: row.quantity * parseFloat(row.price),
       buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
-      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price),
+      // Multiple categories
+      category_id: row.category_id || null,
+      category_1_id: row.category_1_id || null,
+      category_2_id: row.category_2_id || null,
+      category_name: row.category_name || null,
+      category_1_name: row.category_1_name || null,
+      category_2_name: row.category_2_name || null
     };
   }
 
@@ -237,6 +332,9 @@ export class ItemService {
     rate?: number;
     unit?: string;
     description?: string;
+    category_id?: number;
+    category_1_id?: number;
+    category_2_id?: number;
   }): Promise<Item | null> {
     const existingItem = await this.getItemById(businessId, itemId);
     if (!existingItem) {
@@ -254,7 +352,10 @@ export class ItemService {
       'buying_price': 'buying_price',
       'selling_price': 'selling_price',
       'rate': 'price', // Map rate to price column
-      'description': 'description'
+      'description': 'description',
+      'category_id': 'category_id',
+      'category_1_id': 'category_1_id',
+      'category_2_id': 'category_2_id'
     };
 
     // Build dynamic update query using correct column names
@@ -300,6 +401,22 @@ export class ItemService {
 
     const row = result.rows[0];
     
+    // Get category names
+    const categoryQuery = await pool.query(
+      `SELECT 
+        i.*,
+        ic.name as category_name,
+        ic1.name as category_1_name,
+        ic2.name as category_2_name
+      FROM items i
+      LEFT JOIN item_categories ic ON i.category_id = ic.id AND ic.business_id = i.business_id
+      LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id AND ic1.business_id = i.business_id
+      LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id AND ic2.business_id = i.business_id
+      WHERE i.id = $1 AND i.business_id = $2`,
+      [itemId, businessId]
+    );
+    const itemWithCategories = categoryQuery.rows[0] || row;
+    
     // Transform database result to match Item interface
     return {
       id: row.id,
@@ -320,7 +437,14 @@ export class ItemService {
       quantity: row.quantity,
       amount: row.quantity * parseFloat(row.price),
       buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
-      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price)
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price),
+      // Multiple categories
+      category_id: row.category_id || null,
+      category_1_id: row.category_1_id || null,
+      category_2_id: row.category_2_id || null,
+      category_name: itemWithCategories.category_name || null,
+      category_1_name: itemWithCategories.category_1_name || null,
+      category_2_name: itemWithCategories.category_2_name || null
     };
   }
 

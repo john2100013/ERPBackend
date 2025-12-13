@@ -528,13 +528,26 @@ export class ServiceBillingController {
   static async getAssignmentsForBilling(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
+      
+      if (!businessId) {
+        console.error('❌ [ServiceBillingController] getAssignmentsForBilling: businessId is missing');
+        res.status(400).json({
+          success: false,
+          message: 'Business ID is required'
+        });
+        return;
+      }
+      
+      console.log('📋 [ServiceBillingController] getAssignmentsForBilling: businessId =', businessId);
       const assignments = await ServiceBillingService.getAssignmentsForBilling(businessId);
+      console.log('✅ [ServiceBillingController] getAssignmentsForBilling: found', assignments.length, 'assignments');
 
       res.json({
         success: true,
         data: { assignments }
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error('❌ [ServiceBillingController] getAssignmentsForBilling error:', error);
       next(error);
     }
   }
@@ -563,6 +576,108 @@ export class ServiceBillingController {
         success: true,
         message: 'Invoice created successfully',
         data: { invoice }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // ==================== ANALYTICS ====================
+
+  static async getServiceAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { startDate, endDate } = req.query;
+
+      const analytics = await ServiceBillingService.getServiceAnalytics(
+        businessId,
+        startDate as string | undefined,
+        endDate as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: { analytics }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getEmployeeAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { startDate, endDate } = req.query;
+
+      const analytics = await ServiceBillingService.getEmployeeAnalytics(
+        businessId,
+        startDate as string | undefined,
+        endDate as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: { analytics }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getProductAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { startDate, endDate } = req.query;
+
+      const analytics = await ServiceBillingService.getProductAnalytics(
+        businessId,
+        startDate as string | undefined,
+        endDate as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: { analytics }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getPerformanceAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { startDate, endDate } = req.query;
+
+      const analytics = await ServiceBillingService.getPerformanceAnalytics(
+        businessId,
+        startDate as string | undefined,
+        endDate as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: analytics
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getReturningCustomers(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { startDate, endDate } = req.query;
+
+      const customers = await ServiceBillingService.getReturningCustomers(
+        businessId,
+        startDate as string | undefined,
+        endDate as string | undefined
+      );
+
+      res.json({
+        success: true,
+        data: { customers }
       });
     } catch (error) {
       next(error);

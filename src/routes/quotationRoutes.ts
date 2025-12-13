@@ -238,14 +238,84 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
 
     // Create quotation lines (no stock impact for quotations)
     for (const line of lines) {
-      await client.query(`
-        INSERT INTO quotation_lines (
-          quotation_id, item_id, quantity, unit_price, total, description, code, uom
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        quotation.id, line.item_id, line.quantity, line.unit_price,
-        line.quantity * line.unit_price, line.description, line.code, line.uom
-      ]);
+      const itemId = line.item_id ? (isNaN(Number(line.item_id)) ? null : parseInt(String(line.item_id))) : null;
+      
+      // Fetch item category information if item_id is provided
+      let categoryData = {
+        category_id: null,
+        category_1_id: null,
+        category_2_id: null,
+        category_name: null,
+        category_1_name: null,
+        category_2_name: null
+      };
+
+      if (itemId && !isNaN(itemId)) {
+        try {
+          const itemResult = await client.query(`
+            SELECT 
+              i.category_id,
+              i.category_1_id,
+              i.category_2_id,
+              ic.name as category_name,
+              ic1.name as category_1_name,
+              ic2.name as category_2_name
+            FROM items i
+            LEFT JOIN item_categories ic ON i.category_id = ic.id
+            LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id
+            LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id
+            WHERE i.id = $1 AND i.business_id = $2
+          `, [itemId, businessId]);
+
+          if (itemResult.rows.length > 0) {
+            const item = itemResult.rows[0];
+            categoryData = {
+              category_id: item.category_id || null,
+              category_1_id: item.category_1_id || null,
+              category_2_id: item.category_2_id || null,
+              category_name: item.category_name || null,
+              category_1_name: item.category_1_name || null,
+              category_2_name: item.category_2_name || null
+            };
+          }
+        } catch (err) {
+          console.error('Error fetching item categories:', err);
+        }
+      }
+
+      // Check if category columns exist
+      const columnCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'quotation_lines'
+          AND column_name = 'category_id'
+        );
+      `);
+      const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryColumns) {
+        await client.query(`
+          INSERT INTO quotation_lines (
+            quotation_id, item_id, quantity, unit_price, total, description, code, uom,
+            category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `, [
+          quotation.id, itemId, line.quantity, line.unit_price,
+          line.quantity * line.unit_price, line.description, line.code, line.uom,
+          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
+          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO quotation_lines (
+            quotation_id, item_id, quantity, unit_price, total, description, code, uom
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          quotation.id, itemId, line.quantity, line.unit_price,
+          line.quantity * line.unit_price, line.description, line.code, line.uom
+        ]);
+      }
     }
 
     await client.query('COMMIT');
@@ -342,15 +412,83 @@ router.post('/:id/convert-to-invoice', authenticateToken, async (req: Authentica
 
     // Create invoice lines and update stock
     for (const line of linesResult.rows) {
-      // Create invoice line
-      await client.query(`
-        INSERT INTO invoice_lines (
-          invoice_id, item_id, quantity, unit_price, total, description, code, uom
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        invoice.id, line.item_id, line.quantity, line.unit_price,
-        line.total, line.description, line.code, line.uom
-      ]);
+      // Fetch category data from quotation line if available, otherwise from item
+      let categoryData = {
+        category_id: line.category_id || null,
+        category_1_id: line.category_1_id || null,
+        category_2_id: line.category_2_id || null,
+        category_name: line.category_name || null,
+        category_1_name: line.category_1_name || null,
+        category_2_name: line.category_2_name || null
+      };
+
+      // If categories not in quotation line, fetch from item
+      if (!categoryData.category_id && !categoryData.category_1_id && !categoryData.category_2_id && line.item_id) {
+        try {
+          const itemResult = await client.query(`
+            SELECT 
+              i.category_id,
+              i.category_1_id,
+              i.category_2_id,
+              ic.name as category_name,
+              ic1.name as category_1_name,
+              ic2.name as category_2_name
+            FROM items i
+            LEFT JOIN item_categories ic ON i.category_id = ic.id
+            LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id
+            LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id
+            WHERE i.id = $1 AND i.business_id = $2
+          `, [line.item_id, businessId]);
+
+          if (itemResult.rows.length > 0) {
+            const item = itemResult.rows[0];
+            categoryData = {
+              category_id: item.category_id || null,
+              category_1_id: item.category_1_id || null,
+              category_2_id: item.category_2_id || null,
+              category_name: item.category_name || null,
+              category_1_name: item.category_1_name || null,
+              category_2_name: item.category_2_name || null
+            };
+          }
+        } catch (err) {
+          console.error('Error fetching item categories:', err);
+        }
+      }
+
+      // Check if category columns exist
+      const columnCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'invoice_lines'
+          AND column_name = 'category_id'
+        );
+      `);
+      const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryColumns) {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom,
+            category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `, [
+          invoice.id, line.item_id, line.quantity, line.unit_price,
+          line.total, line.description, line.code, line.uom,
+          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
+          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO invoice_lines (
+            invoice_id, item_id, quantity, unit_price, total, description, code, uom
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          invoice.id, line.item_id, line.quantity, line.unit_price,
+          line.total, line.description, line.code, line.uom
+        ]);
+      }
 
       // Update stock quantity (reduce stock for invoice)
       await client.query(`
@@ -555,14 +693,84 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
 
     // Create new quotation lines
     for (const line of lines) {
-      await client.query(`
-        INSERT INTO quotation_lines (
-          quotation_id, item_id, quantity, unit_price, total, description, code, uom
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        quotationId, line.item_id, line.quantity, line.unit_price,
-        line.quantity * line.unit_price, line.description, line.code, line.uom
-      ]);
+      const itemId = line.item_id ? (isNaN(Number(line.item_id)) ? null : parseInt(String(line.item_id))) : null;
+      
+      // Fetch item category information if item_id is provided
+      let categoryData = {
+        category_id: null,
+        category_1_id: null,
+        category_2_id: null,
+        category_name: null,
+        category_1_name: null,
+        category_2_name: null
+      };
+
+      if (itemId && !isNaN(itemId)) {
+        try {
+          const itemResult = await client.query(`
+            SELECT 
+              i.category_id,
+              i.category_1_id,
+              i.category_2_id,
+              ic.name as category_name,
+              ic1.name as category_1_name,
+              ic2.name as category_2_name
+            FROM items i
+            LEFT JOIN item_categories ic ON i.category_id = ic.id
+            LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id
+            LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id
+            WHERE i.id = $1 AND i.business_id = $2
+          `, [itemId, businessId]);
+
+          if (itemResult.rows.length > 0) {
+            const item = itemResult.rows[0];
+            categoryData = {
+              category_id: item.category_id || null,
+              category_1_id: item.category_1_id || null,
+              category_2_id: item.category_2_id || null,
+              category_name: item.category_name || null,
+              category_1_name: item.category_1_name || null,
+              category_2_name: item.category_2_name || null
+            };
+          }
+        } catch (err) {
+          console.error('Error fetching item categories:', err);
+        }
+      }
+
+      // Check if category columns exist
+      const columnCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'quotation_lines'
+          AND column_name = 'category_id'
+        );
+      `);
+      const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryColumns) {
+        await client.query(`
+          INSERT INTO quotation_lines (
+            quotation_id, item_id, quantity, unit_price, total, description, code, uom,
+            category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        `, [
+          quotationId, itemId, line.quantity, line.unit_price,
+          line.quantity * line.unit_price, line.description, line.code, line.uom,
+          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
+          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO quotation_lines (
+            quotation_id, item_id, quantity, unit_price, total, description, code, uom
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          quotationId, itemId, line.quantity, line.unit_price,
+          line.quantity * line.unit_price, line.description, line.code, line.uom
+        ]);
+      }
     }
 
     await client.query('COMMIT');
