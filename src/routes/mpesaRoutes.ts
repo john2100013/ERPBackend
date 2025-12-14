@@ -336,6 +336,169 @@ router.get('/access-token', authenticateToken, async (req: AuthenticatedRequest,
   }
 });
 
+// Search M-Pesa confirmation by transaction code
+router.get('/confirmations/search/:code', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+    const { code } = req.params;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    if (!code || code.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction code is required'
+      });
+    }
+
+    // Search for confirmation by trans_id (case-insensitive)
+    const result = await pool.query(`
+      SELECT 
+        id,
+        trans_id,
+        trans_time,
+        trans_amount,
+        business_short_code,
+        bill_ref_number,
+        invoice_number,
+        msisdn,
+        first_name,
+        middle_name,
+        last_name,
+        created_at,
+        linked_invoice_id,
+        is_processed,
+        linked_at
+      FROM mpesa_confirmations
+      WHERE UPPER(trans_id) = UPPER($1)
+        AND (business_id IS NULL OR business_id = $2)
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [code.trim(), businessId]);
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          found: false,
+          confirmation: null
+        },
+        message: 'M-Pesa confirmation not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        found: true,
+        confirmation: result.rows[0]
+      },
+      message: 'M-Pesa confirmation found'
+    });
+
+  } catch (error: any) {
+    console.error('Error searching M-Pesa confirmation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search M-Pesa confirmation'
+    });
+  }
+});
+
+// Save manual M-Pesa confirmation code
+router.post('/confirmations/manual', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const businessId = req.user?.business_id;
+    const { 
+      trans_id, 
+      trans_amount, 
+      msisdn, 
+      first_name, 
+      middle_name, 
+      last_name,
+      trans_time 
+    } = req.body;
+
+    if (!businessId) {
+      return res.status(400).json({
+        success: false,
+        message: 'No business associated with this account'
+      });
+    }
+
+    if (!trans_id || trans_id.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction code is required'
+      });
+    }
+
+    // Check if confirmation already exists
+    const existingCheck = await pool.query(`
+      SELECT id FROM mpesa_confirmations WHERE UPPER(trans_id) = UPPER($1)
+    `, [trans_id.trim()]);
+
+    if (existingCheck.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'M-Pesa confirmation with this code already exists'
+      });
+    }
+
+    // Save manual confirmation
+    const result = await pool.query(`
+      INSERT INTO mpesa_confirmations (
+        business_id,
+        transaction_type,
+        trans_id,
+        trans_time,
+        trans_amount,
+        msisdn,
+        first_name,
+        middle_name,
+        last_name,
+        result_code,
+        result_desc,
+        is_processed,
+        is_manual
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING *
+    `, [
+      businessId,
+      'C2B',
+      trans_id.trim(),
+      trans_time || new Date().toISOString(),
+      parseFloat(trans_amount) || 0,
+      msisdn || '',
+      first_name || '',
+      middle_name || '',
+      last_name || '',
+      0, // result_code - success
+      'Manually entered', // result_desc
+      false, // is_processed
+      true // is_manual - flag to indicate manual entry
+    ]);
+
+    res.json({
+      success: true,
+      data: result.rows[0],
+      message: 'M-Pesa confirmation saved successfully'
+    });
+
+  } catch (error: any) {
+    console.error('Error saving manual M-Pesa confirmation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save M-Pesa confirmation'
+    });
+  }
+});
+
 // C2B Register URLs - Register confirmation and validation URLs with Safaricom
 router.post('/c2b/register-urls', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {

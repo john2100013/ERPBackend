@@ -44,6 +44,8 @@ export class ItemService {
     `);
     const hasCategory1 = category1Check.rows[0]?.exists || false;
 
+    let insertedItem: any;
+    
     if (hasReorderLevel && hasCategory1) {
       const result = await pool.query(
         `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, category_1_id, category_2_id, reorder_level, manufacturing_date, expiry_date)
@@ -66,7 +68,7 @@ export class ItemService {
           expiry_date || null
         ]
       );
-      return this.transformItem(result.rows[0]);
+      insertedItem = result.rows[0];
     } else if (hasCategory1) {
       const result = await pool.query(
         `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, category_1_id, category_2_id, manufacturing_date, expiry_date)
@@ -88,7 +90,7 @@ export class ItemService {
           expiry_date || null
         ]
       );
-      return this.transformItem(result.rows[0]);
+      insertedItem = result.rows[0];
     } else if (hasReorderLevel) {
       const result = await pool.query(
         `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, reorder_level, manufacturing_date, expiry_date)
@@ -109,7 +111,7 @@ export class ItemService {
           expiry_date || null
         ]
       );
-      return this.transformItem(result.rows[0]);
+      insertedItem = result.rows[0];
     } else {
       const result = await pool.query(
         `INSERT INTO items (business_id, name, quantity, buying_price, selling_price, price, description, category, category_id, manufacturing_date, expiry_date)
@@ -129,8 +131,26 @@ export class ItemService {
           expiry_date || null
         ]
       );
-      return this.transformItem(result.rows[0]);
+      insertedItem = result.rows[0];
     }
+
+    // Reload item with category names (similar to updateItem)
+    const itemId = insertedItem.id;
+    const categoryQuery = await pool.query(
+      `SELECT 
+        i.*,
+        ic.name as category_name,
+        ic1.name as category_1_name,
+        ic2.name as category_2_name
+      FROM items i
+      LEFT JOIN item_categories ic ON i.category_id = ic.id AND ic.business_id = i.business_id
+      LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id AND ic1.business_id = i.business_id
+      LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id AND ic2.business_id = i.business_id
+      WHERE i.id = $1 AND i.business_id = $2`,
+      [itemId, businessId]
+    );
+    
+    return this.transformItem(categoryQuery.rows[0] || insertedItem);
   }
 
   static transformItem(row: any): Item {
@@ -352,6 +372,7 @@ export class ItemService {
       'buying_price': 'buying_price',
       'selling_price': 'selling_price',
       'rate': 'price', // Map rate to price column
+      'unit': 'category', // Map unit to category column (UOM)
       'description': 'description',
       'category_id': 'category_id',
       'category_1_id': 'category_1_id',

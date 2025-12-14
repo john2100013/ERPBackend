@@ -14,7 +14,8 @@ import itemCategoryRoutes from './itemCategoryRoutes';
 import salonRoutes from './salonRoutes';
 import hospitalRoutes from './hospitalRoutes';
 import mpesaRoutes from './mpesaRoutes';
-import { pool } from '../database/connection';
+import syncRoutes from './syncRoutes';
+import { getPool } from '../database/connection';
 
 const router = Router();
 
@@ -28,11 +29,12 @@ router.use('/customers', customerRoutes);
 router.use('/financial-accounts', financialAccountRoutes);
 router.use('/goods-returns', goodsReturnRoutes);
 router.use('/damage-records', damageRecordRoutes);
-router.use('/analytics', analyticsRoutes(pool));
+router.use('/analytics', analyticsRoutes(getPool()));
 router.use('/service-billing', serviceBillingRoutes);
 router.use('/salon', salonRoutes);
 router.use('/hospital', hospitalRoutes);
 router.use('/mpesa', mpesaRoutes);
+router.use('/sync', syncRoutes);
 router.use('/', businessSettingsRoutes);
 
 // Health check endpoint

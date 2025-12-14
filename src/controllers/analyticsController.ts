@@ -776,35 +776,35 @@ export class AnalyticsController {
         
         switch (dateRange) {
           case 'today':
-            dateCondition = "created_at >= CURRENT_DATE";
+            dateCondition = "inv.created_at >= CURRENT_DATE";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE";
             break;
           case 'this_week':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '7 days'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '7 days'";
             break;
           case 'this_month':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '1 month'";
             break;
           case 'this_quarter':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '3 months'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '3 months'";
             break;
           case 'this_year':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 year'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '1 year'";
             break;
           case 'last_month':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '2 months' AND created_at < CURRENT_DATE - INTERVAL '1 month'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '2 months' AND inv.created_at < CURRENT_DATE - INTERVAL '1 month'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '2 months' AND q.created_at < CURRENT_DATE - INTERVAL '1 month'";
             break;
           case 'last_quarter':
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '6 months' AND created_at < CURRENT_DATE - INTERVAL '3 months'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '6 months' AND inv.created_at < CURRENT_DATE - INTERVAL '3 months'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '6 months' AND q.created_at < CURRENT_DATE - INTERVAL '3 months'";
             break;
           default:
-            dateCondition = "created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            dateCondition = "inv.created_at >= CURRENT_DATE - INTERVAL '1 month'";
             dateConditionForQuotations = "q.created_at >= CURRENT_DATE - INTERVAL '1 month'";
         }
 
@@ -1609,11 +1609,15 @@ export class AnalyticsController {
               json_build_object(
                 'id', ql.id,
                 'item_id', ql.item_id,
-                'item_name', ql.item_name,
+                'item_name', ql.description,
+                'description', ql.description,
                 'quantity', ql.quantity,
                 'unit_price', ql.unit_price,
-                'total_price', ql.total_price,
-                'vat_rate', ql.vat_rate
+                'total_price', ql.total,
+                'total', ql.total,
+                'code', ql.code,
+                'uom', ql.uom,
+                'vat_rate', NULL
               ) ORDER BY ql.id
             ) as products
           FROM quotations q
@@ -1637,11 +1641,15 @@ export class AnalyticsController {
               json_build_object(
                 'id', ql.id,
                 'item_id', ql.item_id,
-                'item_name', ql.item_name,
+                'item_name', ql.description,
+                'description', ql.description,
                 'quantity', ql.quantity,
                 'unit_price', ql.unit_price,
-                'total_price', ql.total_price,
-                'vat_rate', ql.vat_rate
+                'total_price', ql.total,
+                'total', ql.total,
+                'code', ql.code,
+                'uom', ql.uom,
+                'vat_rate', NULL
               ) ORDER BY ql.id
             ) as products
           FROM quotations q

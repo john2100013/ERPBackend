@@ -130,12 +130,12 @@ UPDATE items
 SET 
     cost_price = CASE 
         WHEN cost_price = 0 OR cost_price IS NULL THEN 
-            COALESCE(buying_price, unit_price * 0.6, selling_price * 0.6) 
+            COALESCE(buying_price, selling_price * 0.6, price * 0.6) 
         ELSE cost_price 
     END,
     reorder_level = CASE 
         WHEN reorder_level = 0 OR reorder_level IS NULL THEN 
-            GREATEST(5, COALESCE(quantity, stock_quantity, 10) / 4) 
+            GREATEST(5, COALESCE(quantity, 10) / 4) 
         ELSE reorder_level 
     END
 WHERE cost_price = 0 OR cost_price IS NULL OR reorder_level = 0 OR reorder_level IS NULL;

@@ -84,12 +84,56 @@ BEGIN
         ALTER TABLE invoice_lines ADD COLUMN uom VARCHAR(20);
         RAISE NOTICE 'Added uom column to invoice_lines';
     END IF;
+    
+    -- Add created_at column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'invoice_lines' AND column_name = 'created_at'
+    ) THEN
+        ALTER TABLE invoice_lines ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+        RAISE NOTICE 'Added created_at column to invoice_lines';
+    END IF;
+    
+    -- Add updated_at column if missing
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'invoice_lines' AND column_name = 'updated_at'
+    ) THEN
+        ALTER TABLE invoice_lines ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+        RAISE NOTICE 'Added updated_at column to invoice_lines';
+    END IF;
 END $$;
 
--- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice_id ON invoice_lines(invoice_id);
-CREATE INDEX IF NOT EXISTS idx_invoice_lines_item_id ON invoice_lines(item_id);
-CREATE INDEX IF NOT EXISTS idx_invoice_lines_created_at ON invoice_lines(created_at);
+-- Create indexes for better performance (only if columns exist)
+DO $$
+BEGIN
+    -- Create index on invoice_id
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes 
+        WHERE indexname = 'idx_invoice_lines_invoice_id'
+    ) THEN
+        CREATE INDEX idx_invoice_lines_invoice_id ON invoice_lines(invoice_id);
+    END IF;
+    
+    -- Create index on item_id
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes 
+        WHERE indexname = 'idx_invoice_lines_item_id'
+    ) THEN
+        CREATE INDEX idx_invoice_lines_item_id ON invoice_lines(item_id);
+    END IF;
+    
+    -- Create index on created_at only if column exists
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'invoice_lines' AND column_name = 'created_at'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM pg_indexes 
+        WHERE indexname = 'idx_invoice_lines_created_at'
+    ) THEN
+        CREATE INDEX idx_invoice_lines_created_at ON invoice_lines(created_at);
+    END IF;
+END $$;
 
 -- Update existing items with default reorder_level if they don't have one
 UPDATE items 
