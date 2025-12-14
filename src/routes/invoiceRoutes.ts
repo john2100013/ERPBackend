@@ -541,7 +541,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       mpesa_code,
       quotation_id,
       amountPaid = 0,
-      paymentMethod
+      paymentMethod,
+      discount_amount = 0
     } = req.body;
 
     // Validate required fields
@@ -588,7 +589,9 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       subtotal += line.quantity * line.unit_price;
     }
     const vat_amount = subtotal * 0.16;
-    const total_before_rounding = subtotal + vat_amount;
+    const discountAmount = parseFloat(String(discount_amount)) || 0;
+    const total_before_discount = subtotal + vat_amount;
+    const total_before_rounding = Math.max(0, total_before_discount - discountAmount); // Ensure total doesn't go negative
     const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
     // Determine payment status
@@ -606,13 +609,13 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_id, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, total_amount, amount_paid, payment_status, payment_method, mpesa_code,
+        subtotal, vat_amount, discount_amount, total_amount, amount_paid, payment_status, payment_method, mpesa_code,
         quotation_id, notes, due_date, payment_terms, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       RETURNING *
     `, [
       businessId, invoiceNumber, customer_id || null, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, parsedAmountPaid, paymentStatus, payment_method || 'Cash', 
+      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, payment_method || 'Cash', 
       mpesa_code || null, quotation_id, notes, due_date, payment_terms, userId, issueDate
     ]);
 
@@ -952,7 +955,8 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       due_date, 
       payment_terms, 
       notes, 
-      lines 
+      lines,
+      discount_amount = 0
     } = req.body;
 
     // Validate required fields
@@ -985,7 +989,9 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       subtotal += parseFloat(line.quantity) * parseFloat(line.unit_price);
     }
     const vat_amount = subtotal * 0.16;
-    const total_amount = subtotal + vat_amount;
+    const discountAmount = parseFloat(String(discount_amount)) || 0;
+    const total_before_discount = subtotal + vat_amount;
+    const total_amount = Math.max(0, Math.round(total_before_discount - discountAmount)); // Ensure total doesn't go negative
 
     // Update invoice
     const invoiceResult = await client.query(`
@@ -994,17 +1000,18 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
         customer_address = $2, 
         customer_pin = $3,
         subtotal = $4, 
-        vat_amount = $5, 
-        total_amount = $6, 
-        notes = $7, 
-        due_date = $8, 
-        payment_terms = $9,
+        vat_amount = $5,
+        discount_amount = $6,
+        total_amount = $7, 
+        notes = $8, 
+        due_date = $9, 
+        payment_terms = $10,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $10 AND business_id = $11
+      WHERE id = $11 AND business_id = $12
       RETURNING *
     `, [
       customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, total_amount, notes, due_date,
+      subtotal, vat_amount, discountAmount, total_amount, notes, due_date,
       payment_terms, invoiceId, businessId
     ]);
 
