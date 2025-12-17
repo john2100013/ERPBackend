@@ -171,9 +171,9 @@ export class AuthController {
         return;
       }
 
-      // Get current user
-      const user = await AuthService.getUserById(userId);
-      if (!user) {
+      // Get user with password hash
+      const userWithPassword = await AuthService.getUserWithPassword(userId);
+      if (!userWithPassword) {
         res.status(404).json({
           success: false,
           message: 'User not found'
@@ -181,15 +181,162 @@ export class AuthController {
         return;
       }
 
-      // Verify current password (you'll need to get the hashed password)
-      // This is a simplified version - you'd need to get the password hash from DB
-      // and verify it using AuthService.comparePassword
+      // Verify current password
+      const isValidPassword = await AuthService.comparePassword(
+        current_password,
+        userWithPassword.password_hash
+      );
 
+      if (!isValidPassword) {
+        res.status(400).json({
+          success: false,
+          message: 'Current password is incorrect'
+        });
+        return;
+      }
+
+      // Update password
       await AuthService.updateUserPassword(userId, new_password);
 
       res.json({
         success: true,
         message: 'Password updated successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Request password reset (send OTP to email)
+  static async requestPasswordReset(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        res.status(400).json({
+          success: false,
+          message: 'Email is required'
+        });
+        return;
+      }
+
+      // Create reset token and OTP
+      const result = await AuthService.createPasswordResetToken(email);
+
+      // Don't reveal if email exists - always return success
+      // In production, you would send the OTP via email here
+      // For now, we'll return it in the response (remove in production!)
+      if (result) {
+        // TODO: Send OTP via email service
+        // For development, we're returning the OTP in the response
+        // In production, remove the otp from the response and send via email
+        console.log(`Password reset OTP for ${email}: ${result.otp}`);
+        
+        res.json({
+          success: true,
+          message: 'If an account with that email exists, a password reset code has been sent.',
+          // Remove this in production - only for development
+          data: {
+            otp: result.otp, // TODO: Remove this in production
+            token: result.token // TODO: Remove this in production
+          }
+        });
+      } else {
+        // Still return success to prevent email enumeration
+        res.json({
+          success: true,
+          message: 'If an account with that email exists, a password reset code has been sent.'
+        });
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Verify OTP
+  static async verifyPasswordResetOTP(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { email, otp } = req.body;
+
+      if (!email || !otp) {
+        res.status(400).json({
+          success: false,
+          message: 'Email and OTP code are required'
+        });
+        return;
+      }
+
+      const verification = await AuthService.verifyOTP(email, otp);
+
+      if (!verification.valid) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid or expired OTP code'
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'OTP verified successfully',
+        data: {
+          token: verification.token
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Reset password with OTP
+  static async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { email, otp, new_password, token } = req.body;
+
+      if (!new_password) {
+        res.status(400).json({
+          success: false,
+          message: 'New password is required'
+        });
+        return;
+      }
+
+      if (new_password.length < 6) {
+        res.status(400).json({
+          success: false,
+          message: 'New password must be at least 6 characters long'
+        });
+        return;
+      }
+
+      let success = false;
+
+      // Try reset with OTP if provided
+      if (email && otp) {
+        success = await AuthService.resetPasswordWithOTP(email, otp, new_password);
+      } 
+      // Try reset with token if provided
+      else if (token) {
+        success = await AuthService.resetPasswordWithToken(token, new_password);
+      } else {
+        res.status(400).json({
+          success: false,
+          message: 'Either OTP code or reset token is required'
+        });
+        return;
+      }
+
+      if (!success) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid or expired reset code/token'
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Password reset successfully'
       });
     } catch (error) {
       next(error);

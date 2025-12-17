@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
+import crypto from 'crypto';
 import { pool } from '../database/connection';
 import type { User, Business } from '../types';
 
@@ -171,6 +172,36 @@ export class AuthService {
     };
   }
 
+  static async getUserByEmail(email: string): Promise<{ id: number; email: string; password_hash: string } | null> {
+    const result = await pool.query(
+      `SELECT id, email, password_hash
+       FROM users 
+       WHERE email = $1 AND status = 'active'`,
+      [email.toLowerCase().trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
+  static async getUserWithPassword(userId: number): Promise<{ id: number; password_hash: string } | null> {
+    const result = await pool.query(
+      `SELECT id, password_hash
+       FROM users 
+       WHERE id = $1 AND status = 'active'`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
   static async updateUserPassword(userId: number, newPassword: string): Promise<void> {
     const hashedPassword = await this.hashPassword(newPassword);
     
@@ -178,5 +209,132 @@ export class AuthService {
       'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, userId]
     );
+  }
+
+  // Generate a random 6-digit OTP
+  static generateOTP(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  // Generate a random reset token
+  static generateResetToken(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  // Create password reset token/OTP
+  static async createPasswordResetToken(email: string): Promise<{ token: string; otp: string } | null> {
+    const user = await this.getUserByEmail(email);
+    if (!user) {
+      return null; // Don't reveal if email exists
+    }
+
+    // Generate OTP and token
+    const otp = this.generateOTP();
+    const token = this.generateResetToken();
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1); // Token expires in 1 hour
+
+    // Delete any existing tokens for this user
+    await pool.query(
+      'DELETE FROM password_reset_tokens WHERE user_id = $1',
+      [user.id]
+    );
+
+    // Create new token
+    await pool.query(
+      `INSERT INTO password_reset_tokens (user_id, token, otp_code, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, token, otp, expiresAt]
+    );
+
+    return { token, otp };
+  }
+
+  // Verify OTP code
+  static async verifyOTP(email: string, otp: string): Promise<{ valid: boolean; token?: string }> {
+    const user = await this.getUserByEmail(email);
+    if (!user) {
+      return { valid: false };
+    }
+
+    const result = await pool.query(
+      `SELECT token, expires_at, used
+       FROM password_reset_tokens
+       WHERE user_id = $1 AND otp_code = $2 AND used = FALSE
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [user.id, otp]
+    );
+
+    if (result.rows.length === 0) {
+      return { valid: false };
+    }
+
+    const resetToken = result.rows[0];
+    const now = new Date();
+    const expiresAt = new Date(resetToken.expires_at);
+
+    if (expiresAt < now) {
+      return { valid: false };
+    }
+
+    return { valid: true, token: resetToken.token };
+  }
+
+  // Verify reset token
+  static async verifyResetToken(token: string): Promise<{ valid: boolean; userId?: number }> {
+    const result = await pool.query(
+      `SELECT user_id, expires_at, used
+       FROM password_reset_tokens
+       WHERE token = $1 AND used = FALSE
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return { valid: false };
+    }
+
+    const resetToken = result.rows[0];
+    const now = new Date();
+    const expiresAt = new Date(resetToken.expires_at);
+
+    if (expiresAt < now) {
+      return { valid: false };
+    }
+
+    return { valid: true, userId: resetToken.user_id };
+  }
+
+  // Reset password using token
+  static async resetPasswordWithToken(token: string, newPassword: string): Promise<boolean> {
+    const verification = await this.verifyResetToken(token);
+    if (!verification.valid || !verification.userId) {
+      return false;
+    }
+
+    // Update password
+    await this.updateUserPassword(verification.userId, newPassword);
+
+    // Mark token as used
+    await pool.query(
+      'UPDATE password_reset_tokens SET used = TRUE WHERE token = $1',
+      [token]
+    );
+
+    return true;
+  }
+
+  // Reset password using OTP
+  static async resetPasswordWithOTP(email: string, otp: string, newPassword: string): Promise<boolean> {
+    const verification = await this.verifyOTP(email, otp);
+    if (!verification.valid || !verification.token) {
+      return false;
+    }
+
+    // Update password using the token
+    const success = await this.resetPasswordWithToken(verification.token, newPassword);
+    return success;
   }
 }
