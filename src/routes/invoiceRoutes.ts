@@ -562,12 +562,17 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       });
     }
 
-    // If amount is paid, payment method (financial account) is mandatory
-    if (parsedAmountPaid > 0 && !paymentMethod) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payment method is required when amount is paid'
-      });
+    // Parse paymentMethod as financial account ID if it's a number
+    // paymentMethod can be a number (financial account ID) or string (like "Cash", "M-Pesa")
+    let financialAccountId: number | null = null;
+    if (paymentMethod) {
+      const parsedPaymentMethod = typeof paymentMethod === 'string' 
+        ? (isNaN(Number(paymentMethod)) ? null : parseInt(String(paymentMethod)))
+        : (isNaN(Number(paymentMethod)) ? null : parseInt(String(paymentMethod)));
+      
+      if (parsedPaymentMethod !== null && !isNaN(parsedPaymentMethod) && parsedPaymentMethod > 0) {
+        financialAccountId = parsedPaymentMethod;
+      }
     }
 
     await client.query('BEGIN');
@@ -594,13 +599,21 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const total_before_rounding = Math.max(0, total_before_discount - discountAmount); // Ensure total doesn't go negative
     const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
-    // Determine payment status
-    // Determine payment status based on amount paid vs total
+    // Determine payment status and invoice status based on amount paid vs total
+    // payment_status: 'unpaid', 'partial', 'paid', 'overpaid'
+    // status: 'draft', 'sent', 'paid', 'partially_paid', 'cancelled', 'overdue'
     let paymentStatus = 'unpaid';
+    let invoiceStatus = 'sent'; // Default to 'sent' when invoice is created (not draft)
+    
     if (parsedAmountPaid >= total_amount) {
       paymentStatus = 'paid';
+      invoiceStatus = 'paid'; // Fully paid
     } else if (parsedAmountPaid > 0) {
       paymentStatus = 'partial';
+      invoiceStatus = 'partially_paid'; // Partially paid
+    } else {
+      paymentStatus = 'unpaid';
+      invoiceStatus = 'sent'; // Unpaid, invoice was sent
     }
 
     // Create invoice with issue_date as today's date
@@ -609,13 +622,13 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_id, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, discount_amount, total_amount, amount_paid, payment_status, payment_method, mpesa_code,
+        subtotal, vat_amount, discount, total_amount, amount_paid, payment_status, status, payment_method, mpesa_code,
         quotation_id, notes, due_date, payment_terms, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       RETURNING *
     `, [
       businessId, invoiceNumber, customer_id || null, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, payment_method || 'Cash', 
+      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus, payment_method || 'Cash', 
       mpesa_code || null, quotation_id, notes, due_date, payment_terms, userId, issueDate
     ]);
 
@@ -716,16 +729,30 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       }
     }
 
-    // If payment is made, update financial account balance
-    if (parsedAmountPaid > 0 && paymentMethod) {
-      const financialAccountId = parseInt(String(paymentMethod));
-      
+    // If payment is made and a financial account is selected, update the account balance
+    // For invoices: INCREASE balance by amount paid (money coming in)
+    if (parsedAmountPaid > 0 && financialAccountId !== null && !isNaN(financialAccountId)) {
       // Update financial account balance (increase by amount paid)
       await client.query(`
         UPDATE financial_accounts 
         SET current_balance = current_balance + $1, updated_at = NOW()
         WHERE id = $2 AND business_id = $3
       `, [parsedAmountPaid, financialAccountId, businessId]);
+
+      // Map payment_method to valid constraint values: 'cash', 'bank', 'mobile_money', 'cheque', 'card'
+      let validPaymentMethod = 'cash'; // default
+      const paymentMethodStr = String(payment_method || payment_terms || '').toLowerCase();
+      if (paymentMethodStr.includes('mpesa') || paymentMethodStr.includes('m-pesa') || paymentMethodStr === 'mobile_money') {
+        validPaymentMethod = 'mobile_money';
+      } else if (paymentMethodStr.includes('bank')) {
+        validPaymentMethod = 'bank';
+      } else if (paymentMethodStr.includes('cheque') || paymentMethodStr.includes('check')) {
+        validPaymentMethod = 'cheque';
+      } else if (paymentMethodStr.includes('card')) {
+        validPaymentMethod = 'card';
+      } else {
+        validPaymentMethod = 'cash';
+      }
 
       // Create a payment record for audit trail
       await client.query(`
@@ -734,7 +761,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
           payment_reference, payment_date, business_id, created_by
         ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
       `, [
-        invoice.id, financialAccountId, parsedAmountPaid, 'cash',
+        invoice.id, financialAccountId, parsedAmountPaid, validPaymentMethod,
         `INV-${invoiceNumber}`, businessId, userId
       ]);
     }
@@ -794,7 +821,7 @@ router.patch('/:id/status', authenticateToken, async (req: AuthenticatedRequest,
       });
     }
 
-    const validStatuses = ['draft', 'sent', 'paid', 'cancelled', 'overdue'];
+    const validStatuses = ['draft', 'sent', 'paid', 'partially_paid', 'cancelled', 'overdue'];
     if (!validStatuses.includes(status)) {
       console.error('❌ [INVOICE STATUS UPDATE] Invalid status:', status);
       return res.status(400).json({
@@ -956,7 +983,8 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       payment_terms, 
       notes, 
       lines,
-      discount_amount = 0
+      discount_amount = 0,
+      amountPaid = 0
     } = req.body;
 
     // Validate required fields
@@ -992,6 +1020,29 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
     const discountAmount = parseFloat(String(discount_amount)) || 0;
     const total_before_discount = subtotal + vat_amount;
     const total_amount = Math.max(0, Math.round(total_before_discount - discountAmount)); // Ensure total doesn't go negative
+    
+    // Parse amount paid
+    const parsedAmountPaid = parseFloat(String(amountPaid)) || 0;
+    
+    // Determine payment status and invoice status based on amount paid vs total
+    // payment_status: 'unpaid', 'partial', 'paid', 'overpaid'
+    // status: 'draft', 'sent', 'paid', 'partially_paid', 'cancelled', 'overdue'
+    let paymentStatus = 'unpaid';
+    let invoiceStatus = existingInvoice.rows[0].status || 'sent'; // Keep existing status if not changing
+    
+    if (parsedAmountPaid >= total_amount) {
+      paymentStatus = 'paid';
+      invoiceStatus = 'paid'; // Fully paid - amount paid is greater than or equal to total
+    } else if (parsedAmountPaid > 0) {
+      paymentStatus = 'partial';
+      invoiceStatus = 'partially_paid'; // Partially paid
+    } else {
+      paymentStatus = 'unpaid';
+      // Only change to 'sent' if it's not already 'draft' or 'cancelled'
+      if (invoiceStatus !== 'draft' && invoiceStatus !== 'cancelled') {
+        invoiceStatus = 'sent'; // Unpaid, invoice was sent
+      }
+    }
 
     // Update invoice
     const invoiceResult = await client.query(`
@@ -1001,18 +1052,21 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
         customer_pin = $3,
         subtotal = $4, 
         vat_amount = $5,
-        discount_amount = $6,
-        total_amount = $7, 
-        notes = $8, 
-        due_date = $9, 
-        payment_terms = $10,
+        discount = $6,
+        total_amount = $7,
+        amount_paid = $8,
+        payment_status = $9,
+        status = $10,
+        notes = $11, 
+        due_date = $12, 
+        payment_terms = $13,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $11 AND business_id = $12
+      WHERE id = $14 AND business_id = $15
       RETURNING *
     `, [
       customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, discountAmount, total_amount, notes, due_date,
-      payment_terms, invoiceId, businessId
+      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus,
+      notes, due_date, payment_terms, invoiceId, businessId
     ]);
 
     const updatedInvoice = invoiceResult.rows[0];
