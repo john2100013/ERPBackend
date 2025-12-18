@@ -64,7 +64,39 @@ Express.js backend API for the AwesomeInvoice web application with multi-tenant 
    RATE_LIMIT_WINDOW_MS=900000
    RATE_LIMIT_MAX_REQUESTS=100
    FRONTEND_URL=http://localhost:5173
+
+   # Email Configuration (for password reset OTP)
+   # Option 1: Gmail (easiest for development)
+   EMAIL_PROVIDER=gmail
+   GMAIL_USER=your-email@gmail.com
+   GMAIL_APP_PASSWORD=your-app-password
+   EMAIL_FROM=your-email@gmail.com
+   EMAIL_FROM_NAME=AwesomeInvoice
+
+   # Option 2: SMTP (works with most providers)
+   # EMAIL_PROVIDER=smtp
+   # SMTP_HOST=smtp.gmail.com
+   # SMTP_PORT=587
+   # SMTP_SECURE=false
+   # SMTP_USER=your-email@gmail.com
+   # SMTP_PASSWORD=your-password
+   # EMAIL_FROM=your-email@gmail.com
+   # EMAIL_FROM_NAME=AwesomeInvoice
+
+   # Option 3: SendGrid (recommended for production)
+   # EMAIL_PROVIDER=sendgrid
+   # SENDGRID_API_KEY=SG.your-api-key-here
+   # EMAIL_FROM=noreply@yourdomain.com
+   # EMAIL_FROM_NAME=AwesomeInvoice
+
+   # Option 4: Resend (modern email service)
+   # EMAIL_PROVIDER=resend
+   # RESEND_API_KEY=re_your-api-key-here
+   # EMAIL_FROM=noreply@yourdomain.com
+   # EMAIL_FROM_NAME=AwesomeInvoice
    ```
+
+   **Note:** For email configuration details, see [EMAIL_CONFIGURATION.md](./EMAIL_CONFIGURATION.md)
 
 4. **Set up the database**:
    ```bash

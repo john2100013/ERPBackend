@@ -18,7 +18,7 @@ router.get('/business-settings', authenticateToken, async (req: AuthenticatedReq
     }
 
     const result = await pool.query(
-      `SELECT business_name, street, city, email, telephone, created_by, approved_by, 
+      `SELECT business_name, street, city, email, telephone, pin, created_by, approved_by, 
               created_by_signature, approved_by_signature, logo, updated_at
        FROM business_settings 
        WHERE business_id = $1`,
@@ -35,6 +35,7 @@ router.get('/business-settings', authenticateToken, async (req: AuthenticatedReq
           city: '',
           email: '',
           telephone: '',
+          pin: '',
           createdBy: '',
           approvedBy: '',
           createdBySignature: '',
@@ -54,6 +55,7 @@ router.get('/business-settings', authenticateToken, async (req: AuthenticatedReq
         city: settings.city || '',
         email: settings.email || '',
         telephone: settings.telephone || '',
+        pin: settings.pin || '',
         createdBy: settings.created_by || '',
         approvedBy: settings.approved_by || '',
         createdBySignature: settings.created_by_signature || '',
@@ -90,6 +92,7 @@ router.post('/business-settings', authenticateToken, async (req: AuthenticatedRe
       city,
       email,
       telephone,
+      pin,
       createdBy,
       approvedBy,
       createdBySignature,
@@ -117,23 +120,23 @@ router.post('/business-settings', authenticateToken, async (req: AuthenticatedRe
       // Update existing settings
       result = await pool.query(
         `UPDATE business_settings 
-         SET business_name = $1, street = $2, city = $3, email = $4, telephone = $5,
-             created_by = $6, approved_by = $7, created_by_signature = $8, 
-             approved_by_signature = $9, logo = $10, updated_at = CURRENT_TIMESTAMP
-         WHERE business_id = $11
+         SET business_name = $1, street = $2, city = $3, email = $4, telephone = $5, pin = $6,
+             created_by = $7, approved_by = $8, created_by_signature = $9, 
+             approved_by_signature = $10, logo = $11, updated_at = CURRENT_TIMESTAMP
+         WHERE business_id = $12
          RETURNING *`,
-        [businessName, street, city, email, telephone, createdBy, approvedBy, 
+        [businessName, street, city, email, telephone, pin || null, createdBy, approvedBy, 
          createdBySignature, approvedBySignature, logo, businessId]
       );
     } else {
       // Insert new settings
       result = await pool.query(
         `INSERT INTO business_settings 
-         (business_id, business_name, street, city, email, telephone, created_by, 
+         (business_id, business_name, street, city, email, telephone, pin, created_by, 
           approved_by, created_by_signature, approved_by_signature, logo)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
-        [businessId, businessName, street, city, email, telephone, createdBy, 
+        [businessId, businessName, street, city, email, telephone, pin || null, createdBy, 
          approvedBy, createdBySignature, approvedBySignature, logo]
       );
     }

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/authService';
+import { EmailService } from '../services/emailService';
 
 export class AuthController {
   static async register(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -224,22 +225,35 @@ export class AuthController {
       const result = await AuthService.createPasswordResetToken(email);
 
       // Don't reveal if email exists - always return success
-      // In production, you would send the OTP via email here
-      // For now, we'll return it in the response (remove in production!)
       if (result) {
-        // TODO: Send OTP via email service
-        // For development, we're returning the OTP in the response
-        // In production, remove the otp from the response and send via email
-        console.log(`Password reset OTP for ${email}: ${result.otp}`);
+        // Send OTP via email
+        try {
+          await EmailService.sendOTPEmail(email, result.otp);
+          console.log(`✅ Password reset OTP sent to ${email}`);
+        } catch (emailError: any) {
+          console.error('⚠️  Failed to send OTP email:', emailError.message);
+          // In development, still return OTP in response if email fails
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`📧 Development Mode - OTP for ${email}: ${result.otp}`);
+            res.json({
+              success: true,
+              message: 'If an account with that email exists, a password reset code has been sent.',
+              // Only in development - remove in production
+              data: {
+                otp: result.otp,
+                token: result.token,
+                note: 'Email sending failed, OTP shown for development only'
+              }
+            });
+            return;
+          }
+          // In production, don't reveal if email sending failed
+        }
         
+        // Success response (don't include OTP in production)
         res.json({
           success: true,
-          message: 'If an account with that email exists, a password reset code has been sent.',
-          // Remove this in production - only for development
-          data: {
-            otp: result.otp, // TODO: Remove this in production
-            token: result.token // TODO: Remove this in production
-          }
+          message: 'If an account with that email exists, a password reset code has been sent.'
         });
       } else {
         // Still return success to prevent email enumeration
