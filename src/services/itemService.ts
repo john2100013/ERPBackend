@@ -518,4 +518,98 @@ export class ItemService {
       lowStockItems: parseInt(stats.low_stock_items)
     };
   }
+
+  static async getItemsByExpiry(businessId: number, filter: 'expired' | 'today' | 'week' | 'month' | 'custom', startDate?: string, endDate?: string): Promise<Item[]> {
+    let whereClause = 'WHERE i.business_id = $1 AND i.expiry_date IS NOT NULL';
+    const queryParams: any[] = [businessId];
+    let paramCount = 1;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    switch (filter) {
+      case 'expired':
+        // Items that have already expired (expiry_date < today)
+        whereClause += ` AND i.expiry_date < $${++paramCount}`;
+        queryParams.push(todayStr);
+        break;
+      case 'today':
+        // Items expiring today
+        whereClause += ` AND i.expiry_date = $${++paramCount}`;
+        queryParams.push(todayStr);
+        break;
+      case 'week':
+        // Items expiring within one week (today to 7 days from now)
+        const weekFromNow = new Date(today);
+        weekFromNow.setDate(weekFromNow.getDate() + 7);
+        const weekFromNowStr = weekFromNow.toISOString().split('T')[0];
+        whereClause += ` AND i.expiry_date >= $${++paramCount} AND i.expiry_date <= $${++paramCount}`;
+        queryParams.push(todayStr, weekFromNowStr);
+        break;
+      case 'month':
+        // Items expiring within one month (today to 30 days from now)
+        const monthFromNow = new Date(today);
+        monthFromNow.setDate(monthFromNow.getDate() + 30);
+        const monthFromNowStr = monthFromNow.toISOString().split('T')[0];
+        whereClause += ` AND i.expiry_date >= $${++paramCount} AND i.expiry_date <= $${++paramCount}`;
+        queryParams.push(todayStr, monthFromNowStr);
+        break;
+      case 'custom':
+        // Custom date range
+        if (startDate) {
+          whereClause += ` AND i.expiry_date >= $${++paramCount}`;
+          queryParams.push(startDate);
+        }
+        if (endDate) {
+          whereClause += ` AND i.expiry_date <= $${++paramCount}`;
+          queryParams.push(endDate);
+        }
+        break;
+    }
+
+    const query = `
+      SELECT 
+        i.*,
+        ic.name as category_name,
+        ic1.name as category_1_name,
+        ic2.name as category_2_name
+      FROM items i
+      LEFT JOIN item_categories ic ON i.category_id = ic.id AND ic.business_id = i.business_id
+      LEFT JOIN item_categories ic1 ON i.category_1_id = ic1.id AND ic1.business_id = i.business_id
+      LEFT JOIN item_categories ic2 ON i.category_2_id = ic2.id AND ic2.business_id = i.business_id
+      ${whereClause}
+      ORDER BY i.expiry_date ASC`;
+
+    const result = await pool.query(query, queryParams);
+
+    return result.rows.map(row => ({
+      id: row.id,
+      business_id: row.business_id,
+      code: `ITEM${String(row.id).padStart(3, '0')}`,
+      description: row.description || '',
+      unit_price: parseFloat(row.price),
+      uom: row.category || 'PCS',
+      category: row.category,
+      stock_quantity: row.quantity,
+      is_active: true,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      item_name: row.name,
+      rate: parseFloat(row.price),
+      unit: row.category || 'PCS',
+      quantity: row.quantity,
+      amount: row.quantity * parseFloat(row.price),
+      buying_price: row.buying_price ? parseFloat(row.buying_price) : 0,
+      selling_price: row.selling_price ? parseFloat(row.selling_price) : parseFloat(row.price),
+      category_id: row.category_id || null,
+      category_1_id: row.category_1_id || null,
+      category_2_id: row.category_2_id || null,
+      category_name: row.category_name || null,
+      category_1_name: row.category_1_name || null,
+      category_2_name: row.category_2_name || null,
+      expiry_date: row.expiry_date || null,
+      manufacturing_date: row.manufacturing_date || null
+    }));
+  }
 }

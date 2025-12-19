@@ -163,9 +163,22 @@ export class ItemController {
       if (rate !== undefined) updateData.rate = parseFloat(rate);
       if (unit !== undefined) updateData.unit = unit?.trim() || null;
       if (description !== undefined) updateData.description = description?.trim() || null;
-      if (category_id !== undefined) updateData.category_id = category_id ? parseInt(category_id) : null;
-      if (category_1_id !== undefined) updateData.category_1_id = category_1_id ? parseInt(category_1_id) : null;
-      if (category_2_id !== undefined) updateData.category_2_id = category_2_id ? parseInt(category_2_id) : null;
+      // Handle category fields: explicitly set to null if empty string, null, or undefined (to unlink categories)
+      if (category_id !== undefined) {
+        updateData.category_id = (category_id && category_id !== '' && category_id !== 'null') 
+          ? parseInt(category_id) 
+          : null;
+      }
+      if (category_1_id !== undefined) {
+        updateData.category_1_id = (category_1_id && category_1_id !== '' && category_1_id !== 'null') 
+          ? parseInt(category_1_id) 
+          : null;
+      }
+      if (category_2_id !== undefined) {
+        updateData.category_2_id = (category_2_id && category_2_id !== '' && category_2_id !== 'null') 
+          ? parseInt(category_2_id) 
+          : null;
+      }
 
       const item = await ItemService.updateItem(businessId, itemId, updateData);
 
@@ -234,6 +247,43 @@ export class ItemController {
       res.json({
         success: true,
         data: { stats }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getItemsByExpiry(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { filter = 'week', startDate, endDate } = req.query;
+
+      if (!['expired', 'today', 'week', 'month', 'custom'].includes(filter as string)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid filter. Must be: expired, today, week, month, or custom'
+        });
+        return;
+      }
+
+      if (filter === 'custom' && (!startDate || !endDate)) {
+        res.status(400).json({
+          success: false,
+          message: 'startDate and endDate are required for custom filter'
+        });
+        return;
+      }
+
+      const items = await ItemService.getItemsByExpiry(
+        businessId,
+        filter as 'expired' | 'today' | 'week' | 'month' | 'custom',
+        startDate as string,
+        endDate as string
+      );
+
+      res.json({
+        success: true,
+        data: { items }
       });
     } catch (error) {
       next(error);

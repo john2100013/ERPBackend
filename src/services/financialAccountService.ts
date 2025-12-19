@@ -228,4 +228,96 @@ export class FinancialAccountService {
       }))
     };
   }
+
+  static async getAccountTransactionHistory(businessId: number, accountId: number | null, filter: 'today' | 'week' | 'month' | 'custom', startDate?: string, endDate?: string): Promise<{
+    date: string;
+    account_id: number;
+    account_name: string;
+    balance: number;
+    transactions: number;
+    total_inflow: number;
+    total_outflow: number;
+  }[]> {
+    let dateFilter = '';
+    const queryParams: any[] = [businessId];
+    let paramCount = 1;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    switch (filter) {
+      case 'today':
+        // From midnight today
+        dateFilter = `AND DATE(ip.payment_date) = $${++paramCount}`;
+        queryParams.push(todayStr);
+        break;
+      case 'week':
+        // From beginning of week (Monday)
+        const weekStart = new Date(today);
+        const dayOfWeek = weekStart.getDay();
+        const diff = weekStart.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust to Monday
+        weekStart.setDate(diff);
+        weekStart.setHours(0, 0, 0, 0);
+        const weekStartStr = weekStart.toISOString().split('T')[0];
+        dateFilter = `AND DATE(ip.payment_date) >= $${++paramCount}`;
+        queryParams.push(weekStartStr);
+        break;
+      case 'month':
+        // From beginning of month
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        const monthStartStr = monthStart.toISOString().split('T')[0];
+        dateFilter = `AND DATE(ip.payment_date) >= $${++paramCount}`;
+        queryParams.push(monthStartStr);
+        break;
+      case 'custom':
+        // Custom date range
+        if (startDate) {
+          dateFilter += ` AND DATE(ip.payment_date) >= $${++paramCount}`;
+          queryParams.push(startDate);
+        }
+        if (endDate) {
+          dateFilter += ` AND DATE(ip.payment_date) <= $${++paramCount}`;
+          queryParams.push(endDate);
+        }
+        break;
+    }
+
+    let accountFilter = '';
+    if (accountId) {
+      accountFilter = `AND ip.financial_account_id = $${++paramCount}`;
+      queryParams.push(accountId);
+    }
+
+    // Get transaction history grouped by date and account
+    // Show daily transaction totals (inflow/outflow) for graph visualization
+    const query = `
+      SELECT 
+        DATE(ip.payment_date) as date,
+        fa.id as account_id,
+        fa.account_name,
+        COUNT(DISTINCT ip.id) as transactions,
+        COALESCE(SUM(ip.amount), 0) as total_amount,
+        COALESCE(SUM(CASE WHEN ip.amount > 0 THEN ip.amount ELSE 0 END), 0) as total_inflow,
+        COALESCE(SUM(CASE WHEN ip.amount < 0 THEN ABS(ip.amount) ELSE 0 END), 0) as total_outflow,
+        fa.current_balance as balance
+      FROM invoice_payments ip
+      INNER JOIN financial_accounts fa ON ip.financial_account_id = fa.id
+      WHERE ip.business_id = $1 ${accountFilter} ${dateFilter}
+      GROUP BY DATE(ip.payment_date), fa.id, fa.account_name, fa.current_balance
+      ORDER BY date ASC, fa.account_name`;
+
+    const result = await pool.query(query, queryParams);
+
+    return result.rows.map(row => ({
+      date: row.date,
+      account_id: row.account_id,
+      account_name: row.account_name,
+      balance: parseFloat(row.balance),
+      transactions: parseInt(row.transactions),
+      total_inflow: parseFloat(row.total_inflow),
+      total_outflow: parseFloat(row.total_outflow),
+      total_amount: parseFloat(row.total_amount || 0)
+    }));
+  }
 }

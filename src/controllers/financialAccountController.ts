@@ -266,4 +266,51 @@ export class FinancialAccountController {
       next(error);
     }
   }
+
+  static async getTransactionHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = (req as any).businessId;
+      const { accountId, filter = 'week', startDate, endDate } = req.query;
+
+      if (!['today', 'week', 'month', 'custom'].includes(filter as string)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid filter. Must be: today, week, month, or custom'
+        });
+        return;
+      }
+
+      if (filter === 'custom' && (!startDate || !endDate)) {
+        res.status(400).json({
+          success: false,
+          message: 'startDate and endDate are required for custom filter'
+        });
+        return;
+      }
+
+      const accountIdNum = accountId ? parseInt(accountId as string) : null;
+      if (accountId && isNaN(accountIdNum!)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid account ID'
+        });
+        return;
+      }
+
+      const history = await FinancialAccountService.getAccountTransactionHistory(
+        businessId,
+        accountIdNum,
+        filter as 'today' | 'week' | 'month' | 'custom',
+        startDate as string,
+        endDate as string
+      );
+
+      res.json({
+        success: true,
+        data: { history }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }

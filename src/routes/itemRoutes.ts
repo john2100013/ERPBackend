@@ -11,6 +11,7 @@ router.use(authenticateToken);
 router.post('/', ItemController.createItem);
 router.get('/', ItemController.getItems);
 router.get('/stats', ItemController.getItemStats);
+router.get('/expiry', ItemController.getItemsByExpiry);
 router.get('/:id', ItemController.getItem);
 router.put('/:id', ItemController.updateItem);
 router.delete('/:id', ItemController.deleteItem);

@@ -254,8 +254,8 @@ router.get('/business/names', authenticateToken, async (req: AuthenticatedReques
     // If not found, create default entry
     if (result.rows.length === 0) {
       result = await pool.query(
-        `INSERT INTO business_custom_category_names (business_id, category_1_name, category_2_name)
-         VALUES ($1, 'Category 1', 'Category 2')
+        `INSERT INTO business_custom_category_names (business_id, category_name, category_1_name, category_2_name)
+         VALUES ($1, 'Category', 'Category 1', 'Category 2')
          RETURNING *`,
         [businessId]
       );
@@ -278,7 +278,7 @@ router.get('/business/names', authenticateToken, async (req: AuthenticatedReques
 router.put('/business/names', authenticateToken, async (req: AuthenticatedRequest, res) => {
   try {
     const businessId = req.user?.business_id;
-    const { category_1_name, category_2_name } = req.body;
+    const { category_name, category_1_name, category_2_name } = req.body;
 
     if (!businessId) {
       return res.status(400).json({
@@ -296,20 +296,41 @@ router.put('/business/names', authenticateToken, async (req: AuthenticatedReques
     if (result.rows.length === 0) {
       // Create new entry
       result = await pool.query(
-        `INSERT INTO business_custom_category_names (business_id, category_1_name, category_2_name)
-         VALUES ($1, $2, $3)
+        `INSERT INTO business_custom_category_names (business_id, category_name, category_1_name, category_2_name)
+         VALUES ($1, $2, $3, $4)
          RETURNING *`,
-        [businessId, category_1_name || 'Category 1', category_2_name || 'Category 2']
+        [businessId, category_name || 'Category', category_1_name || 'Category 1', category_2_name || 'Category 2']
       );
     } else {
-      // Update existing entry
-      result = await pool.query(
-        `UPDATE business_custom_category_names 
-         SET category_1_name = $1, category_2_name = $2, updated_at = CURRENT_TIMESTAMP
-         WHERE business_id = $3
-         RETURNING *`,
-        [category_1_name || 'Category 1', category_2_name || 'Category 2', businessId]
-      );
+      // Update existing entry - check if category_name column exists
+      const columnCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'business_custom_category_names'
+          AND column_name = 'category_name'
+        );
+      `);
+      const hasCategoryNameColumn = columnCheck.rows[0]?.exists || false;
+
+      if (hasCategoryNameColumn) {
+        result = await pool.query(
+          `UPDATE business_custom_category_names 
+           SET category_name = $1, category_1_name = $2, category_2_name = $3, updated_at = CURRENT_TIMESTAMP
+           WHERE business_id = $4
+           RETURNING *`,
+          [category_name || 'Category', category_1_name || 'Category 1', category_2_name || 'Category 2', businessId]
+        );
+      } else {
+        // Fallback if column doesn't exist yet
+        result = await pool.query(
+          `UPDATE business_custom_category_names 
+           SET category_1_name = $1, category_2_name = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE business_id = $3
+           RETURNING *`,
+          [category_1_name || 'Category 1', category_2_name || 'Category 2', businessId]
+        );
+      }
     }
 
     res.json({
