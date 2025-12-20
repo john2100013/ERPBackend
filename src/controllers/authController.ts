@@ -131,9 +131,12 @@ export class AuthController {
   static async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const userId = (req as any).user.id;
+      console.log('🔐 [AuthController.getProfile] Fetching profile for userId:', userId);
+      
       const user = await AuthService.getUserById(userId);
 
       if (!user) {
+        console.log('❌ [AuthController.getProfile] User not found');
         res.status(404).json({
           success: false,
           message: 'User not found'
@@ -141,11 +144,22 @@ export class AuthController {
         return;
       }
 
+      console.log('✅ [AuthController.getProfile] Profile fetched:', {
+        userId: user.id,
+        permissions: {
+          can_access_analytics: user.can_access_analytics,
+          can_access_invoices: user.can_access_invoices,
+          can_access_business_settings: user.can_access_business_settings,
+          can_access_financial_accounts: user.can_access_financial_accounts
+        }
+      });
+
       res.json({
         success: true,
         data: { user }
       });
     } catch (error) {
+      console.error('❌ [AuthController.getProfile] Error:', error);
       next(error);
     }
   }

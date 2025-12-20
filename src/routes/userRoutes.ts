@@ -25,7 +25,12 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
     }
 
     const result = await client.query(
-      `SELECT id, business_id, email, first_name, last_name, role, status, created_at, updated_at
+      `SELECT id, business_id, email, first_name, last_name, role, status, created_at, updated_at,
+              can_access_analytics, can_access_business_settings, can_access_financial_accounts,
+              can_access_pos, can_access_advanced_package, can_access_salon, can_access_service_billing,
+              can_access_hospital, can_access_invoices, can_access_quotations, can_access_items,
+              can_access_customers, can_access_goods_returns, can_access_damage_tracking,
+              can_access_signatures, can_access_database_settings
        FROM users
        WHERE business_id = $1
        ORDER BY created_at DESC`,
@@ -220,6 +225,25 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
       values.push(hashedPassword);
     }
 
+    // Handle permissions if provided
+    if (req.body.permissions) {
+      const perms = req.body.permissions;
+      const permissionFields = [
+        'can_access_analytics', 'can_access_business_settings', 'can_access_financial_accounts',
+        'can_access_pos', 'can_access_advanced_package', 'can_access_salon', 'can_access_service_billing',
+        'can_access_hospital', 'can_access_invoices', 'can_access_quotations', 'can_access_items',
+        'can_access_customers', 'can_access_goods_returns', 'can_access_damage_tracking',
+        'can_access_signatures', 'can_access_database_settings'
+      ];
+
+      permissionFields.forEach(field => {
+        if (perms[field] !== undefined) {
+          updates.push(`${field} = $${paramCount++}`);
+          values.push(perms[field]);
+        }
+      });
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({
         success: false,
@@ -234,7 +258,12 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
       `UPDATE users 
        SET ${updates.join(', ')}
        WHERE id = $${paramCount} AND business_id = $${paramCount + 1}
-       RETURNING id, business_id, email, first_name, last_name, role, status, created_at, updated_at`,
+       RETURNING id, business_id, email, first_name, last_name, role, status, created_at, updated_at,
+              can_access_analytics, can_access_business_settings, can_access_financial_accounts,
+              can_access_pos, can_access_advanced_package, can_access_salon, can_access_service_billing,
+              can_access_hospital, can_access_invoices, can_access_quotations, can_access_items,
+              can_access_customers, can_access_goods_returns, can_access_damage_tracking,
+              can_access_signatures, can_access_database_settings`,
       values
     );
 
@@ -343,67 +372,119 @@ router.get('/analytics/activity', async (req: AuthenticatedRequest, res) => {
     
     const now = new Date();
     let startDate: Date;
+    let endDate: Date | null = null;
     
     switch (dateRange) {
       case 'today':
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'this_week':
         const dayOfWeek = now.getDay();
         startDate = new Date(now);
         startDate.setDate(now.getDate() - dayOfWeek);
         startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'this_month':
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'this_quarter':
         const quarter = Math.floor(now.getMonth() / 3);
         startDate = new Date(now.getFullYear(), quarter * 3, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'this_year':
         startDate = new Date(now.getFullYear(), 0, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'last_month':
         startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-        dateFilter = `AND created_at >= $${dateParams.length + 1} AND created_at <= $${dateParams.length + 2}`;
-        dateParams.push(startDate, lastMonthEnd);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        endDate.setHours(23, 59, 59, 999);
         break;
       default:
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
     }
     
-    if (!dateFilter) {
-      dateFilter = `AND created_at >= $${dateParams.length + 1}`;
-      dateParams.push(startDate);
+    // Build date filter with explicit PostgreSQL timestamp casting
+    // Convert Date objects to ISO strings and cast to timestamp in SQL
+    // businessId is $1, so date params start at $2
+    const startDateISO = startDate.toISOString();
+    const endDateISO = endDate ? endDate.toISOString() : null;
+    
+    console.log('🔍 [Employee Activity] Date Range Debug:', {
+      dateRange,
+      startDate: startDateISO,
+      endDate: endDateISO,
+      startDateType: typeof startDateISO,
+      endDateType: typeof endDateISO
+    });
+    
+    if (endDate) {
+      dateFilter = `AND created_at >= $2::timestamp AND created_at <= $3::timestamp`;
+      dateParams.push(startDateISO, endDateISO);
+    } else {
+      dateFilter = `AND created_at >= $2::timestamp`;
+      dateParams.push(startDateISO);
     }
 
+    console.log('🔍 [Employee Activity] Query Debug:', {
+      dateFilter,
+      dateParams,
+      businessId,
+      fullParams: [businessId, ...dateParams]
+    });
+
     // Get user activity from invoices
-    const invoiceActivity = await client.query(
-      `SELECT 
+    const invoiceQuery = `SELECT 
         created_by as user_id,
         COUNT(*) as invoice_count,
         COALESCE(SUM(total_amount), 0) as total_amount
        FROM invoices
        WHERE business_id = $1 AND created_by IS NOT NULL ${dateFilter}
-       GROUP BY created_by`,
+       GROUP BY created_by`;
+    
+    console.log('🔍 [Employee Activity] Invoice Query:', invoiceQuery);
+    console.log('🔍 [Employee Activity] Invoice Params:', [businessId, ...dateParams]);
+    
+    const invoiceActivity = await client.query(
+      invoiceQuery,
       [businessId, ...dateParams]
     );
 
     // Get user activity from quotations
-    const quotationActivity = await client.query(
-      `SELECT 
+    const quotationQuery = `SELECT 
         created_by as user_id,
         COUNT(*) as quotation_count,
         COALESCE(SUM(total_amount), 0) as total_amount
        FROM quotations
        WHERE business_id = $1 AND created_by IS NOT NULL ${dateFilter}
-       GROUP BY created_by`,
+       GROUP BY created_by`;
+    
+    console.log('🔍 [Employee Activity] Quotation Query:', quotationQuery);
+    console.log('🔍 [Employee Activity] Quotation Params:', [businessId, ...dateParams]);
+    
+    const quotationActivity = await client.query(
+      quotationQuery,
       [businessId, ...dateParams]
     );
 
-    // Combine results
+    // Combine results with separate totals
     const activityMap = new Map();
     
     invoiceActivity.rows.forEach((row: any) => {
@@ -413,11 +494,14 @@ router.get('/analytics/activity', async (req: AuthenticatedRequest, res) => {
           user_id: userId,
           invoice_count: 0,
           quotation_count: 0,
+          invoice_total: 0,
+          quotation_total: 0,
           total_amount: 0
         });
       }
       const activity = activityMap.get(userId);
       activity.invoice_count = parseInt(row.invoice_count);
+      activity.invoice_total = parseFloat(row.total_amount || 0);
       activity.total_amount += parseFloat(row.total_amount || 0);
     });
 
@@ -428,11 +512,14 @@ router.get('/analytics/activity', async (req: AuthenticatedRequest, res) => {
           user_id: userId,
           invoice_count: 0,
           quotation_count: 0,
+          invoice_total: 0,
+          quotation_total: 0,
           total_amount: 0
         });
       }
       const activity = activityMap.get(userId);
       activity.quotation_count = parseInt(row.quotation_count);
+      activity.quotation_total = parseFloat(row.total_amount || 0);
       activity.total_amount += parseFloat(row.total_amount || 0);
     });
 
@@ -471,6 +558,315 @@ router.get('/analytics/activity', async (req: AuthenticatedRequest, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch employee activity'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Get invoices for a specific user (Admin only)
+router.get('/:userId/invoices', async (req: AuthenticatedRequest, res) => {
+  const client = await pool.connect();
+  
+  try {
+    const businessId = req.businessId;
+    const userRole = req.role;
+    const userId = parseInt(req.params.userId);
+    const { dateRange = 'this_month' } = req.query;
+
+    // Only Admin can view user invoices
+    if (userRole !== 'admin' && userRole !== 'owner') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    // Build date filter
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date | null = null;
+    
+    switch (dateRange) {
+      case 'today':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_week':
+        const dayOfWeek = now.getDay();
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - dayOfWeek);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_quarter':
+        const quarter = Math.floor(now.getMonth() / 3);
+        startDate = new Date(now.getFullYear(), quarter * 3, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_year':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'last_month':
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      default:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+    }
+
+    const startDateISO = startDate.toISOString();
+    const endDateISO = endDate ? endDate.toISOString() : null;
+    
+    let dateFilter = '';
+    if (endDate) {
+      dateFilter = `AND i.created_at >= $3::timestamp AND i.created_at <= $4::timestamp`;
+    } else {
+      dateFilter = `AND i.created_at >= $3::timestamp`;
+    }
+
+    // Get invoices with lines
+    const invoicesQuery = `
+      SELECT 
+        i.id,
+        i.invoice_number as "invoiceNumber",
+        i.customer_name as "customerName",
+        i.created_at as "createdAt",
+        i.issue_date as "issueDate",
+        i.total_amount as "totalAmount",
+        COALESCE(i.amount_paid, 0) as "amountPaid",
+        (i.total_amount - COALESCE(i.amount_paid, 0)) as "amountDue",
+        i.status,
+        CASE 
+          WHEN COALESCE(i.amount_paid, 0) = 0 THEN 'unpaid'
+          WHEN COALESCE(i.amount_paid, 0) >= i.total_amount THEN 'paid'
+          ELSE 'partial'
+        END as "paymentStatus"
+      FROM invoices i
+      WHERE i.business_id = $1 AND i.created_by = $2 ${dateFilter}
+      ORDER BY i.created_at DESC
+    `;
+
+    const invoiceParams = endDate 
+      ? [businessId, userId, startDateISO, endDateISO]
+      : [businessId, userId, startDateISO];
+
+    const invoicesResult = await client.query(invoicesQuery, invoiceParams);
+
+    // Get invoice lines for each invoice
+    const invoices = await Promise.all(
+      invoicesResult.rows.map(async (invoice: any) => {
+        const linesResult = await client.query(
+          `SELECT 
+            id,
+            item_id as "item_id",
+            description,
+            code,
+            quantity,
+            unit_price as "unit_price",
+            total,
+            uom
+           FROM invoice_lines
+           WHERE invoice_id = $1
+           ORDER BY id`,
+          [invoice.id]
+        );
+
+        return {
+          ...invoice,
+          products: linesResult.rows.map((line: any) => ({
+            id: line.id,
+            item_id: line.item_id,
+            description: line.description,
+            code: line.code,
+            quantity: parseFloat(line.quantity),
+            unit_price: parseFloat(line.unit_price),
+            total: parseFloat(line.total),
+            uom: line.uom
+          }))
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: { invoices }
+    });
+  } catch (error: any) {
+    console.error('Error fetching user invoices:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user invoices'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Get quotations for a specific user (Admin only)
+router.get('/:userId/quotations', async (req: AuthenticatedRequest, res) => {
+  const client = await pool.connect();
+  
+  try {
+    const businessId = req.businessId;
+    const userRole = req.role;
+    const userId = parseInt(req.params.userId);
+    const { dateRange = 'this_month' } = req.query;
+
+    // Only Admin can view user quotations
+    if (userRole !== 'admin' && userRole !== 'owner') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin privileges required.'
+      });
+    }
+
+    // Build date filter (same logic as invoices)
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date | null = null;
+    
+    switch (dateRange) {
+      case 'today':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_week':
+        const dayOfWeek = now.getDay();
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - dayOfWeek);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_quarter':
+        const quarter = Math.floor(now.getMonth() / 3);
+        startDate = new Date(now.getFullYear(), quarter * 3, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'this_year':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'last_month':
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      default:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
+    }
+
+    const startDateISO = startDate.toISOString();
+    const endDateISO = endDate ? endDate.toISOString() : null;
+    
+    let dateFilter = '';
+    if (endDate) {
+      dateFilter = `AND q.created_at >= $3::timestamp AND q.created_at <= $4::timestamp`;
+    } else {
+      dateFilter = `AND q.created_at >= $3::timestamp`;
+    }
+
+    // Get quotations with lines
+    const quotationsQuery = `
+      SELECT 
+        q.id,
+        q.quotation_number as "quotationNumber",
+        q.customer_name as "customerName",
+        q.created_at as "createdAt",
+        q.valid_until as "validUntil",
+        q.total_amount as "totalAmount",
+        q.status
+      FROM quotations q
+      WHERE q.business_id = $1 AND q.created_by = $2 ${dateFilter}
+      ORDER BY q.created_at DESC
+    `;
+
+    const quotationParams = endDate 
+      ? [businessId, userId, startDateISO, endDateISO]
+      : [businessId, userId, startDateISO];
+
+    const quotationsResult = await client.query(quotationsQuery, quotationParams);
+
+    // Get quotation lines for each quotation
+    const quotations = await Promise.all(
+      quotationsResult.rows.map(async (quotation: any) => {
+        const linesResult = await client.query(
+          `SELECT 
+            id,
+            item_id as "item_id",
+            description,
+            code,
+            quantity,
+            unit_price as "unit_price",
+            total,
+            uom
+           FROM quotation_lines
+           WHERE quotation_id = $1
+           ORDER BY id`,
+          [quotation.id]
+        );
+
+        return {
+          ...quotation,
+          products: linesResult.rows.map((line: any) => ({
+            id: line.id,
+            item_id: line.item_id,
+            description: line.description,
+            code: line.code,
+            quantity: parseFloat(line.quantity),
+            unit_price: parseFloat(line.unit_price),
+            total: parseFloat(line.total),
+            uom: line.uom
+          }))
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: { quotations }
+    });
+  } catch (error: any) {
+    console.error('Error fetching user quotations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user quotations'
     });
   } finally {
     client.release();

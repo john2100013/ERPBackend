@@ -124,8 +124,34 @@ export class AuthService {
       role: userData.role,
       is_active: userData.status === 'active',
       created_at: userData.created_at,
-      updated_at: userData.updated_at
+      updated_at: userData.updated_at,
+      can_access_analytics: userData.can_access_analytics ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_business_settings: userData.can_access_business_settings ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_financial_accounts: userData.can_access_financial_accounts ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_pos: userData.can_access_pos ?? true,
+      can_access_advanced_package: userData.can_access_advanced_package ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_salon: userData.can_access_salon ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_service_billing: userData.can_access_service_billing ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_hospital: userData.can_access_hospital ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_invoices: userData.can_access_invoices ?? true,
+      can_access_quotations: userData.can_access_quotations ?? true,
+      can_access_items: userData.can_access_items ?? true,
+      can_access_customers: userData.can_access_customers ?? true,
+      can_access_goods_returns: userData.can_access_goods_returns ?? true,
+      can_access_damage_tracking: userData.can_access_damage_tracking ?? true,
+      can_access_signatures: userData.can_access_signatures ?? true,
+      can_access_database_settings: userData.can_access_database_settings ?? (userData.role === 'admin' || userData.role === 'owner')
     };
+
+    console.log('🔐 [AuthService.login] User permissions loaded:', {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      can_access_analytics: user.can_access_analytics,
+      can_access_invoices: user.can_access_invoices,
+      can_access_business_settings: user.can_access_business_settings,
+      can_access_financial_accounts: user.can_access_financial_accounts
+    });
 
     const business: Business = {
       id: userData.business_id,
@@ -148,7 +174,12 @@ export class AuthService {
 
   static async getUserById(userId: number): Promise<User | null> {
     const result = await pool.query(
-      `SELECT id, business_id, email, first_name, last_name, role, status, created_at, updated_at
+      `SELECT id, business_id, email, first_name, last_name, role, status, created_at, updated_at,
+              can_access_analytics, can_access_business_settings, can_access_financial_accounts,
+              can_access_pos, can_access_advanced_package, can_access_salon, can_access_service_billing,
+              can_access_hospital, can_access_invoices, can_access_quotations, can_access_items,
+              can_access_customers, can_access_goods_returns, can_access_damage_tracking,
+              can_access_signatures, can_access_database_settings
        FROM users 
        WHERE id = $1 AND status = 'active'`,
       [userId]
@@ -159,7 +190,7 @@ export class AuthService {
     }
 
     const userData = result.rows[0];
-    return {
+    const user: User = {
       id: userData.id,
       business_id: userData.business_id,
       email: userData.email,
@@ -168,8 +199,33 @@ export class AuthService {
       role: userData.role,
       is_active: userData.status === 'active',
       created_at: userData.created_at,
-      updated_at: userData.updated_at
+      updated_at: userData.updated_at,
+      can_access_analytics: userData.can_access_analytics ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_business_settings: userData.can_access_business_settings ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_financial_accounts: userData.can_access_financial_accounts ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_pos: userData.can_access_pos ?? true,
+      can_access_advanced_package: userData.can_access_advanced_package ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_salon: userData.can_access_salon ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_service_billing: userData.can_access_service_billing ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_hospital: userData.can_access_hospital ?? (userData.role === 'admin' || userData.role === 'owner'),
+      can_access_invoices: userData.can_access_invoices ?? true,
+      can_access_quotations: userData.can_access_quotations ?? true,
+      can_access_items: userData.can_access_items ?? true,
+      can_access_customers: userData.can_access_customers ?? true,
+      can_access_goods_returns: userData.can_access_goods_returns ?? true,
+      can_access_damage_tracking: userData.can_access_damage_tracking ?? true,
+      can_access_signatures: userData.can_access_signatures ?? true,
+      can_access_database_settings: userData.can_access_database_settings ?? (userData.role === 'admin' || userData.role === 'owner')
     };
+    
+    console.log('🔐 [AuthService.getUserById] User permissions loaded:', {
+      userId: user.id,
+      role: user.role,
+      can_access_analytics: user.can_access_analytics,
+      can_access_invoices: user.can_access_invoices
+    });
+    
+    return user;
   }
 
   static async getUserByEmail(email: string): Promise<{ id: number; email: string; password_hash: string } | null> {
