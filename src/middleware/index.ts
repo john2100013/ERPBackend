@@ -14,14 +14,17 @@ export const limiter = rateLimit({
   skip: (req) => req.method === 'OPTIONS' // Skip rate limiting for CORS preflight requests
 });
 
-// CORS configuration - simplified for better reliability on Vercel
+// CORS configuration - optimized for Vercel serverless functions
 export const corsOptions: cors.CorsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     try {
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) {
+        console.log('CORS: Allowing request with no origin');
         return callback(null, true);
       }
+      
+      console.log('CORS: Checking origin:', origin);
       
       // Define allowed origins
       const allowedOrigins = [
@@ -32,21 +35,34 @@ export const corsOptions: cors.CorsOptions = {
         'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app'
       ].filter(Boolean) as string[];
       
-      // Check if origin is in allowed list or matches Vercel pattern
-      const isAllowed = allowedOrigins.includes(origin) || /^https:\/\/frontend-.*\.vercel\.app$/.test(origin);
-      
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        // Allow any .vercel.app origin as fallback (fail open for production)
-        if (origin.includes('.vercel.app')) {
-          callback(null, true);
-        } else {
-          callback(null, false);
-        }
+      // Check if origin is in allowed list
+      if (allowedOrigins.includes(origin)) {
+        console.log('CORS: Origin allowed (in allowed list)');
+        return callback(null, true);
       }
+      
+      // Check if origin matches Vercel frontend pattern
+      if (/^https:\/\/frontend-.*\.vercel\.app$/.test(origin)) {
+        console.log('CORS: Origin allowed (matches Vercel pattern)');
+        return callback(null, true);
+      }
+      
+      // Allow any .vercel.app origin as fallback (fail open for production)
+      if (origin.includes('.vercel.app')) {
+        console.log('CORS: Origin allowed (Vercel fallback)');
+        return callback(null, true);
+      }
+      
+      // In production, be more permissive for Vercel deployments
+      if (process.env.NODE_ENV === 'production' && origin.includes('vercel.app')) {
+        console.log('CORS: Origin allowed (production Vercel fallback)');
+        return callback(null, true);
+      }
+      
+      console.log('CORS: Origin rejected:', origin);
+      callback(null, false);
     } catch (error) {
-      // On any error, allow the request (fail open)
+      // On any error, allow the request (fail open for production)
       console.error('CORS origin check error:', error);
       callback(null, true);
     }
@@ -54,7 +70,7 @@ export const corsOptions: cors.CorsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'Cache-Control'],
   exposedHeaders: ['Authorization'],
   preflightContinue: false,
   maxAge: 86400
