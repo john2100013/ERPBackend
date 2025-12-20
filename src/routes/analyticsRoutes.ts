@@ -68,5 +68,10 @@ export default (pool: Pool) => {
     await analyticsController.getAllQuotations(req, res);
   });
 
+  // All Purchase Invoices with Products
+  router.get('/all-purchase-invoices', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    await analyticsController.getAllPurchaseInvoices(req, res);
+  });
+
   return router;
 };

@@ -253,13 +253,18 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
     const total_before_rounding = subtotal + vat_amount;
     const total_amount = Math.round(total_before_rounding);
 
+    // Calculate actual_amount_received and change_given for draft (if amount_paid is provided)
+    const draftAmountPaid = 0; // Drafts typically don't have payment initially
+    const actualAmountReceived = Math.min(total_amount, draftAmountPaid);
+    const changeGiven = Math.max(0, draftAmountPaid - total_amount);
+
     // Create draft invoice (without invoice number, status = 'draft')
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_name, customer_address, customer_pin,
-        due_date, payment_terms, subtotal, vat_amount, total_amount, amount_paid,
+        due_date, payment_terms, subtotal, vat_amount, total_amount, amount_paid, actual_amount_received, change_given,
         payment_status, status, notes, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *
     `, [
       businessId, 
@@ -272,7 +277,9 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
       subtotal,
       vat_amount,
       total_amount,
-      0, // amount_paid
+      draftAmountPaid, // amount_paid
+      actualAmountReceived,
+      changeGiven,
       'unpaid',
       'draft', // status
       account_id ? `Account: ${account_id}` : '',
@@ -616,6 +623,12 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const total_before_rounding = Math.max(0, total_before_discount - discountAmount); // Ensure total doesn't go negative
     const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
+    // Calculate actual_amount_received and change_given
+    // actual_amount_received = min(total_amount, amount_paid) - the actual amount we received from customer
+    // change_given = max(0, amount_paid - total_amount) - change given to customer if they overpaid
+    const actualAmountReceived = Math.min(total_amount, parsedAmountPaid);
+    const changeGiven = Math.max(0, parsedAmountPaid - total_amount);
+
     // Determine payment status and invoice status based on amount paid vs total
     // payment_status: 'unpaid', 'partial', 'paid', 'overpaid'
     // status: 'draft', 'sent', 'paid', 'partially_paid', 'cancelled', 'overdue'
@@ -639,13 +652,13 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const invoiceResult = await client.query(`
       INSERT INTO invoices (
         business_id, invoice_number, customer_id, customer_name, customer_address, customer_pin,
-        subtotal, vat_amount, discount, total_amount, amount_paid, payment_status, status, payment_method, mpesa_code,
+        subtotal, vat_amount, discount, total_amount, amount_paid, actual_amount_received, change_given, payment_status, status, payment_method, mpesa_code,
         quotation_id, notes, due_date, payment_terms, created_by, issue_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       RETURNING *
     `, [
       businessId, invoiceNumber, customer_id || null, customer_name, customer_address, customer_pin,
-      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus, payment_method || 'Cash', 
+      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, actualAmountReceived, changeGiven, paymentStatus, invoiceStatus, payment_method || 'Cash', 
       mpesa_code || null, quotation_id, notes, due_date, payment_terms, userId, issueDate
     ]);
 
@@ -1043,6 +1056,12 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
     // Parse amount paid
     const parsedAmountPaid = parseFloat(String(amountPaid)) || 0;
     
+    // Calculate actual_amount_received and change_given
+    // actual_amount_received = min(total_amount, amount_paid) - the actual amount we received from customer
+    // change_given = max(0, amount_paid - total_amount) - change given to customer if they overpaid
+    const actualAmountReceived = Math.min(total_amount, parsedAmountPaid);
+    const changeGiven = Math.max(0, parsedAmountPaid - total_amount);
+    
     // Determine payment status and invoice status based on amount paid vs total
     // payment_status: 'unpaid', 'partial', 'paid', 'overpaid'
     // status: 'draft', 'sent', 'paid', 'partially_paid', 'cancelled', 'overdue'
@@ -1074,17 +1093,19 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
         discount = $6,
         total_amount = $7,
         amount_paid = $8,
-        payment_status = $9,
-        status = $10,
-        notes = $11, 
-        due_date = $12, 
-        payment_terms = $13,
+        actual_amount_received = $9,
+        change_given = $10,
+        payment_status = $11,
+        status = $12,
+        notes = $13, 
+        due_date = $14, 
+        payment_terms = $15,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $14 AND business_id = $15
+      WHERE id = $16 AND business_id = $17
       RETURNING *
     `, [
       customer_name, customer_address, customer_pin,
-      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus,
+      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, actualAmountReceived, changeGiven, paymentStatus, invoiceStatus,
       notes, due_date, payment_terms, invoiceId, businessId
     ]);
 

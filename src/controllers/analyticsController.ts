@@ -1493,7 +1493,9 @@ export class AnalyticsController {
             inv.issue_date,
             inv.total_amount,
             COALESCE(inv.amount_paid, 0) as amount_paid,
-            COALESCE(inv.balance_due, inv.total_amount - COALESCE(inv.amount_paid, 0), inv.total_amount) as amount_due,
+            COALESCE(inv.actual_amount_received, LEAST(inv.total_amount, COALESCE(inv.amount_paid, 0)), 0) as actual_amount_received,
+            COALESCE(inv.change_given, GREATEST(0, COALESCE(inv.amount_paid, 0) - inv.total_amount), 0) as change_given,
+            COALESCE(inv.balance_due, GREATEST(0, inv.total_amount - COALESCE(inv.amount_paid, 0)), inv.total_amount) as amount_due,
             inv.status,
             inv.payment_status,
             json_agg(
@@ -1513,7 +1515,7 @@ export class AnalyticsController {
           WHERE inv.business_id = $1
             AND ${dateCondition}
           GROUP BY inv.id, inv.invoice_number, inv.customer_name, inv.created_at, 
-                   inv.issue_date, inv.total_amount, inv.amount_paid, inv.balance_due, 
+                   inv.issue_date, inv.total_amount, inv.amount_paid, inv.actual_amount_received, inv.change_given, inv.balance_due, 
                    inv.status, inv.payment_status
           ORDER BY inv.created_at DESC
         `;
@@ -1528,6 +1530,8 @@ export class AnalyticsController {
           issueDate: row.issue_date ? row.issue_date.toISOString().split('T')[0] : null,
           totalAmount: parseFloat(row.total_amount || 0),
           amountPaid: parseFloat(row.amount_paid || 0),
+          actualAmountReceived: parseFloat(row.actual_amount_received || 0),
+          changeGiven: parseFloat(row.change_given || 0),
           amountDue: parseFloat(row.amount_due || 0),
           status: row.status,
           paymentStatus: row.payment_status,
@@ -1682,6 +1686,112 @@ export class AnalyticsController {
     } catch (error) {
       console.error('Error fetching all quotations:', error);
       res.status(500).json({ error: 'Failed to fetch all quotations' });
+    }
+  }
+
+  // All Purchase Invoices with Products
+  async getAllPurchaseInvoices(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      const businessId = req.businessId;
+      
+      if (!businessId) {
+        res.status(400).json({ error: 'Business ID is required' });
+        return;
+      }
+      
+      try {
+        const dateRange = req.query.dateRange as string || 'today';
+        let dateCondition = '';
+        
+        switch (dateRange) {
+          case 'today':
+            dateCondition = "pi.created_at >= CURRENT_DATE";
+            break;
+          case 'this_week':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '7 days'";
+            break;
+          case 'this_month':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'this_quarter':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          case 'this_year':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '1 year'";
+            break;
+          case 'last_month':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '2 months' AND pi.created_at < CURRENT_DATE - INTERVAL '1 month'";
+            break;
+          case 'last_quarter':
+            dateCondition = "pi.created_at >= CURRENT_DATE - INTERVAL '6 months' AND pi.created_at < CURRENT_DATE - INTERVAL '3 months'";
+            break;
+          default:
+            dateCondition = "pi.created_at >= CURRENT_DATE";
+        }
+
+        // Get all purchase invoices with their line items
+        const purchaseInvoicesQuery = `
+          SELECT 
+            pi.id,
+            pi.purchase_invoice_number,
+            pi.supplier_name,
+            pi.created_at,
+            pi.issue_date,
+            pi.total_amount,
+            COALESCE(pi.amount_paid, 0) as amount_paid,
+            COALESCE(pi.actual_amount_paid, LEAST(pi.total_amount, COALESCE(pi.amount_paid, 0)), 0) as actual_amount_paid,
+            COALESCE(pi.change_received, GREATEST(0, COALESCE(pi.amount_paid, 0) - pi.total_amount), 0) as change_received,
+            GREATEST(0, pi.total_amount - COALESCE(pi.amount_paid, 0)) as amount_due,
+            pi.status,
+            pi.payment_status,
+            json_agg(
+              json_build_object(
+                'id', pil.id,
+                'item_id', pil.item_id,
+                'description', pil.description,
+                'code', pil.code,
+                'quantity', pil.quantity,
+                'unit_price', pil.unit_price,
+                'total', pil.total,
+                'uom', pil.uom
+              ) ORDER BY pil.id
+            ) FILTER (WHERE pil.id IS NOT NULL) as products
+          FROM purchase_invoices pi
+          LEFT JOIN purchase_invoice_lines pil ON pi.id = pil.purchase_invoice_id
+          WHERE pi.business_id = $1
+            AND ${dateCondition}
+          GROUP BY pi.id, pi.purchase_invoice_number, pi.supplier_name, pi.created_at, 
+                   pi.issue_date, pi.total_amount, pi.amount_paid, pi.actual_amount_paid, pi.change_received, 
+                   pi.status, pi.payment_status
+          ORDER BY pi.created_at DESC
+        `;
+
+        const result = await client.query(purchaseInvoicesQuery, [businessId]);
+        
+        const purchaseInvoices = result.rows.map((row: any) => ({
+          id: row.id,
+          purchaseInvoiceNumber: row.purchase_invoice_number,
+          supplierName: row.supplier_name,
+          createdAt: row.created_at.toISOString(),
+          issueDate: row.issue_date ? row.issue_date.toISOString().split('T')[0] : null,
+          totalAmount: parseFloat(row.total_amount || 0),
+          amountPaid: parseFloat(row.amount_paid || 0),
+          actualAmountPaid: parseFloat(row.actual_amount_paid || 0),
+          changeReceived: parseFloat(row.change_received || 0),
+          amountDue: parseFloat(row.amount_due || 0),
+          status: row.status,
+          paymentStatus: row.payment_status,
+          products: row.products && row.products[0]?.id ? row.products : []
+        }));
+
+        res.json({ purchaseInvoices });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error fetching all purchase invoices:', error);
+      res.status(500).json({ error: 'Failed to fetch all purchase invoices' });
     }
   }
 }

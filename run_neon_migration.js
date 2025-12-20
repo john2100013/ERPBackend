@@ -7,28 +7,36 @@ require('dotenv').config();
 // It can be in format: postgresql://user:password@host/database?sslmode=require
 // Or you can use individual DB_* variables
 const getDatabaseConfig = () => {
-  // Check if NEON_DATABASE_URL is set (common for Neon)
-  if (process.env.NEON_DATABASE_URL) {
-    return {
-      connectionString: process.env.NEON_DATABASE_URL
-    };
-  }
-  
-  // Check if DATABASE_URL is set
+  // Check if DATABASE_URL is set (primary for Neon, matches connection.ts)
   if (process.env.DATABASE_URL) {
     return {
-      connectionString: process.env.DATABASE_URL
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }, // Neon requires SSL
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
     };
   }
   
-  // Fall back to individual connection parameters
+  // Check if NEON_DATABASE_URL is set (alternative name)
+  if (process.env.NEON_DATABASE_URL) {
+    return {
+      connectionString: process.env.NEON_DATABASE_URL,
+      ssl: { rejectUnauthorized: false }, // Neon requires SSL
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    };
+  }
+  
+  // Fall back to individual connection parameters (for Neon, SSL is required)
   return {
     host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
+    port: parseInt(process.env.DB_PORT || '5432'),
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+    ssl: { rejectUnauthorized: false } // Neon requires SSL
   };
 };
 
