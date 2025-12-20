@@ -10,6 +10,23 @@ export interface User {
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
+  // Permission fields
+  can_access_analytics?: boolean;
+  can_access_business_settings?: boolean;
+  can_access_financial_accounts?: boolean;
+  can_access_pos?: boolean;
+  can_access_advanced_package?: boolean;
+  can_access_salon?: boolean;
+  can_access_service_billing?: boolean;
+  can_access_hospital?: boolean;
+  can_access_invoices?: boolean;
+  can_access_quotations?: boolean;
+  can_access_items?: boolean;
+  can_access_customers?: boolean;
+  can_access_goods_returns?: boolean;
+  can_access_damage_tracking?: boolean;
+  can_access_signatures?: boolean;
+  can_access_database_settings?: boolean;
 }
 
 export interface Business {

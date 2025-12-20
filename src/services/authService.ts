@@ -93,6 +93,8 @@ export class AuthService {
   }
 
   static async login(email: string, password: string): Promise<{ user: User; business: Business; token: string }> {
+    console.log('🔐 [AuthService.login] Starting login for email:', email);
+    
     // Get user with business info
     const result = await pool.query(
       `SELECT u.*, b.name as business_name, b.status as business_status
@@ -102,11 +104,47 @@ export class AuthService {
       [email]
     );
 
+    console.log('🔐 [AuthService.login] Query result:', {
+      rowsFound: result.rows.length,
+      userId: result.rows[0]?.id,
+      email: result.rows[0]?.email,
+      role: result.rows[0]?.role
+    });
+
     if (result.rows.length === 0) {
+      console.log('❌ [AuthService.login] No user found');
       throw new Error('Invalid credentials');
     }
 
     const userData = result.rows[0];
+    
+    console.log('🔐 [AuthService.login] Raw user data from DB:', {
+      userId: userData.id,
+      email: userData.email,
+      role: userData.role,
+      can_access_analytics: userData.can_access_analytics,
+      can_access_invoices: userData.can_access_invoices,
+      can_access_business_settings: userData.can_access_business_settings,
+      can_access_financial_accounts: userData.can_access_financial_accounts,
+      allPermissions: {
+        can_access_analytics: userData.can_access_analytics,
+        can_access_business_settings: userData.can_access_business_settings,
+        can_access_financial_accounts: userData.can_access_financial_accounts,
+        can_access_pos: userData.can_access_pos,
+        can_access_advanced_package: userData.can_access_advanced_package,
+        can_access_salon: userData.can_access_salon,
+        can_access_service_billing: userData.can_access_service_billing,
+        can_access_hospital: userData.can_access_hospital,
+        can_access_invoices: userData.can_access_invoices,
+        can_access_quotations: userData.can_access_quotations,
+        can_access_items: userData.can_access_items,
+        can_access_customers: userData.can_access_customers,
+        can_access_goods_returns: userData.can_access_goods_returns,
+        can_access_damage_tracking: userData.can_access_damage_tracking,
+        can_access_signatures: userData.can_access_signatures,
+        can_access_database_settings: userData.can_access_database_settings
+      }
+    });
 
     // Check password
     const isValidPassword = await this.comparePassword(password, userData.password_hash);

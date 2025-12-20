@@ -95,9 +95,11 @@ export class AuthController {
   static async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email, password } = req.body;
+      console.log('🔐 [AuthController.login] Login request received for:', email);
 
       // Validation
       if (!email || !password) {
+        console.log('❌ [AuthController.login] Missing email or password');
         res.status(400).json({
           success: false,
           message: 'Email and password are required'
@@ -106,6 +108,18 @@ export class AuthController {
       }
 
       const result = await AuthService.login(email.toLowerCase().trim(), password);
+
+      console.log('✅ [AuthController.login] Login successful, returning user data:', {
+        userId: result.user.id,
+        email: result.user.email,
+        role: result.user.role,
+        permissions: {
+          can_access_analytics: result.user.can_access_analytics,
+          can_access_invoices: result.user.can_access_invoices,
+          can_access_business_settings: result.user.can_access_business_settings,
+          can_access_financial_accounts: result.user.can_access_financial_accounts
+        }
+      });
 
       res.json({
         success: true,
@@ -117,6 +131,7 @@ export class AuthController {
         }
       });
     } catch (error: any) {
+      console.error('❌ [AuthController.login] Login error:', error.message);
       if (error.message === 'Invalid credentials') {
         res.status(401).json({
           success: false,
@@ -147,10 +162,10 @@ export class AuthController {
       console.log('✅ [AuthController.getProfile] Profile fetched:', {
         userId: user.id,
         permissions: {
-          can_access_analytics: user.can_access_analytics,
-          can_access_invoices: user.can_access_invoices,
-          can_access_business_settings: user.can_access_business_settings,
-          can_access_financial_accounts: user.can_access_financial_accounts
+          can_access_analytics: user.can_access_analytics ?? false,
+          can_access_invoices: user.can_access_invoices ?? false,
+          can_access_business_settings: user.can_access_business_settings ?? false,
+          can_access_financial_accounts: user.can_access_financial_accounts ?? false
         }
       });
 
