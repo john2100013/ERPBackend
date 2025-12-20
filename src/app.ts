@@ -35,13 +35,8 @@ const debugLog = {
 
 // Security middleware
 // IMPORTANT: CORS must be applied FIRST and BEFORE rate limiting to handle preflight OPTIONS requests
+// The cors middleware automatically handles OPTIONS preflight requests
 app.use(cors(corsOptions));
-
-// Explicit OPTIONS handler for CORS preflight requests (critical for Vercel)
-app.options('*', cors(corsOptions), (req, res) => {
-  res.status(200).end();
-});
-
 app.use(securityHeaders);
 app.use(limiter);
 
