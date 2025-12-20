@@ -340,6 +340,21 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
       `);
       const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
 
+      // Get item description from database if item_id is provided, otherwise use item.description or item.name
+      let itemDescription = item.description || item.name || '';
+      if (itemId && !isNaN(itemId) && !item.description) {
+        try {
+          const itemDescResult = await client.query(`
+            SELECT description, item_name FROM items WHERE id = $1 AND business_id = $2
+          `, [itemId, businessId]);
+          if (itemDescResult.rows.length > 0) {
+            itemDescription = itemDescResult.rows[0].description || itemDescResult.rows[0].item_name || item.name || '';
+          }
+        } catch (err) {
+          console.error('Error fetching item description:', err);
+        }
+      }
+
       if (hasCategoryColumns) {
         await client.query(`
           INSERT INTO invoice_lines (
@@ -352,7 +367,7 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
           item.quantity,
           item.rate,
           item.amount,
-          item.name,
+          itemDescription,
           item.code || '',
           item.unit || 'PCS',
           categoryData.category_id,
@@ -373,7 +388,7 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
           item.quantity,
           item.rate,
           item.amount,
-          item.name,
+          itemDescription,
           item.code || '',
           item.unit || 'PCS'
         ]);
@@ -542,7 +557,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       quotation_id,
       amountPaid = 0,
       paymentMethod,
-      discount_amount = 0
+      discount_amount = 0,
+      vat_amount // Accept vat_amount from frontend (calculated based on includeVAT checkbox)
     } = req.body;
 
     // Validate required fields
@@ -593,9 +609,10 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     for (const line of lines) {
       subtotal += line.quantity * line.unit_price;
     }
-    const vat_amount = subtotal * 0.16;
+    // Use provided vat_amount from frontend (respects includeVAT checkbox), or calculate it if not provided (backward compatibility)
+    const calculatedVatAmount = vat_amount !== undefined ? parseFloat(String(vat_amount)) : (subtotal * 0.16);
     const discountAmount = parseFloat(String(discount_amount)) || 0;
-    const total_before_discount = subtotal + vat_amount;
+    const total_before_discount = subtotal + calculatedVatAmount;
     const total_before_rounding = Math.max(0, total_before_discount - discountAmount); // Ensure total doesn't go negative
     const total_amount = Math.round(total_before_rounding); // Round to nearest whole number
 
@@ -628,7 +645,7 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       RETURNING *
     `, [
       businessId, invoiceNumber, customer_id || null, customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus, payment_method || 'Cash', 
+      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus, payment_method || 'Cash', 
       mpesa_code || null, quotation_id, notes, due_date, payment_terms, userId, issueDate
     ]);
 
@@ -984,7 +1001,8 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       notes, 
       lines,
       discount_amount = 0,
-      amountPaid = 0
+      amountPaid = 0,
+      vat_amount // Accept vat_amount from frontend (calculated based on includeVAT checkbox)
     } = req.body;
 
     // Validate required fields
@@ -1016,9 +1034,10 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
     for (const line of lines) {
       subtotal += parseFloat(line.quantity) * parseFloat(line.unit_price);
     }
-    const vat_amount = subtotal * 0.16;
+    // Use provided vat_amount from frontend (respects includeVAT checkbox), or calculate it if not provided (backward compatibility)
+    const calculatedVatAmount = vat_amount !== undefined ? parseFloat(String(vat_amount)) : (subtotal * 0.16);
     const discountAmount = parseFloat(String(discount_amount)) || 0;
-    const total_before_discount = subtotal + vat_amount;
+    const total_before_discount = subtotal + calculatedVatAmount;
     const total_amount = Math.max(0, Math.round(total_before_discount - discountAmount)); // Ensure total doesn't go negative
     
     // Parse amount paid
@@ -1065,7 +1084,7 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       RETURNING *
     `, [
       customer_name, customer_address, customer_pin,
-      subtotal, vat_amount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus,
+      subtotal, calculatedVatAmount, discountAmount, total_amount, parsedAmountPaid, paymentStatus, invoiceStatus,
       notes, due_date, payment_terms, invoiceId, businessId
     ]);
 
