@@ -17,55 +17,68 @@ export const limiter = rateLimit({
 // CORS configuration
 export const corsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    // In development, allow all localhost origins
-    const isDevelopment = process.env.NODE_ENV !== 'production';
-    
-    console.log(`🔍 CORS Debug - Incoming origin: ${origin}`);
-    console.log(`🔍 CORS Debug - FRONTEND_URL env: ${process.env.FRONTEND_URL}`);
-    console.log(`🔍 CORS Debug - NODE_ENV: ${process.env.NODE_ENV}`);
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) {
-      console.log('✅ CORS: Allowing request with no origin');
-      return callback(null, true);
-    }
-    
-    // In development, allow all localhost and 127.0.0.1 origins
-    if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-      console.log(`✅ CORS: Allowing localhost origin in development: ${origin}`);
-      return callback(null, true);
-    }
-    
-    // Define allowed origins (strings only, normalize for comparison)
-    const allowedOriginsList = [
-      process.env.FRONTEND_URL,
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'https://frontend-ruby-theta-36.vercel.app', // Current production frontend
-      'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Old/backup frontend
-    ].filter(Boolean) as string[]; // Remove any undefined/null values
-    
-    // Normalize origin for comparison (remove trailing slashes)
-    const normalizedOrigin = origin?.replace(/\/$/, '');
-    
-    console.log(`🔍 CORS Debug - Allowed origins:`, allowedOriginsList);
-    console.log(`🔍 CORS Debug - Normalized origin:`, normalizedOrigin);
-    
-    // Check if origin matches any allowed origin (normalized comparison)
-    const isAllowed = allowedOriginsList.some(allowed => {
-      const normalizedAllowed = allowed.replace(/\/$/, '');
-      return normalizedAllowed === normalizedOrigin || allowed === normalizedOrigin;
-    });
-    
-    // Also check if it matches Vercel preview URL pattern
-    const isVercelPreview = /^https:\/\/frontend-.*\.vercel\.app$/.test(origin || '');
-    
-    if (isAllowed || isVercelPreview) {
-      console.log(`✅ CORS: Origin ${origin} is allowed`);
+    try {
+      // In development, allow all localhost origins
+      const isDevelopment = process.env.NODE_ENV !== 'production';
+      
+      console.log(`🔍 CORS Debug - Incoming origin: ${origin}`);
+      console.log(`🔍 CORS Debug - FRONTEND_URL env: ${process.env.FRONTEND_URL}`);
+      console.log(`🔍 CORS Debug - NODE_ENV: ${process.env.NODE_ENV}`);
+      
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) {
+        console.log('✅ CORS: Allowing request with no origin');
+        return callback(null, true);
+      }
+      
+      // In development, allow all localhost and 127.0.0.1 origins
+      if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+        console.log(`✅ CORS: Allowing localhost origin in development: ${origin}`);
+        return callback(null, true);
+      }
+      
+      // Define allowed origins (strings only, normalize for comparison)
+      const allowedOriginsList = [
+        process.env.FRONTEND_URL,
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'https://frontend-ruby-theta-36.vercel.app', // Current production frontend
+        'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Old/backup frontend
+      ].filter(Boolean) as string[]; // Remove any undefined/null values
+      
+      // Normalize origin for comparison (remove trailing slashes)
+      const normalizedOrigin = origin?.replace(/\/$/, '');
+      
+      console.log(`🔍 CORS Debug - Allowed origins:`, allowedOriginsList);
+      console.log(`🔍 CORS Debug - Normalized origin:`, normalizedOrigin);
+      
+      // Check if origin matches any allowed origin (normalized comparison)
+      const isAllowed = allowedOriginsList.some(allowed => {
+        const normalizedAllowed = allowed.replace(/\/$/, '');
+        return normalizedAllowed === normalizedOrigin || allowed === normalizedOrigin;
+      });
+      
+      // Also check if it matches Vercel preview URL pattern
+      const isVercelPreview = /^https:\/\/frontend-.*\.vercel\.app$/.test(origin || '');
+      
+      if (isAllowed || isVercelPreview) {
+        console.log(`✅ CORS: Origin ${origin} is allowed`);
+        callback(null, true);
+      } else {
+        // Be more permissive for Vercel URLs to avoid blocking legitimate requests
+        if (origin && origin.includes('.vercel.app')) {
+          console.warn(`⚠️ CORS: Allowing Vercel URL despite not being in exact list: ${origin}`);
+          callback(null, true);
+        } else {
+          console.error(`❌ CORS blocked origin: ${origin}`);
+          callback(new Error('Not allowed by CORS'), false);
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ CORS origin check error:', error);
+      // On error, allow the request to prevent blocking (fail open for production)
+      console.warn('⚠️ CORS: Allowing request due to error in origin check');
       callback(null, true);
-    } else {
-      console.error(`❌ CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'), false);
     }
   },
   credentials: true,

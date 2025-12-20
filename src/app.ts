@@ -33,6 +33,9 @@ const debugLog = {
   }
 };
 
+// Handle CORS preflight requests explicitly (before other middleware)
+app.options('*', cors(corsOptions));
+
 // Security middleware
 // IMPORTANT: CORS must be applied BEFORE rate limiting to handle preflight OPTIONS requests
 app.use(cors(corsOptions));
