@@ -667,9 +667,19 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
     // Create invoice lines and update stock
     for (const line of lines) {
       // Create invoice line - ensure proper type conversion
-      const itemId = line.item_id ? (isNaN(Number(line.item_id)) ? null : parseInt(String(line.item_id))) : null;
+      const itemId = line.item_id ? (isNaN(Number(line.item_id)) ? null : parseInt(String(line.item_id), 10)) : null;
       const quantity = parseFloat(String(line.quantity));
       const unitPrice = parseFloat(String(line.unit_price));
+      
+      // Validate quantity is a valid number
+      if (isNaN(quantity) || quantity <= 0) {
+        throw new Error(`Invalid quantity: ${line.quantity}`);
+      }
+      
+      // Validate unitPrice is a valid number
+      if (isNaN(unitPrice) || unitPrice < 0) {
+        throw new Error(`Invalid unit price: ${line.unit_price}`);
+      }
       
       // Fetch item category information if item_id is provided
       let categoryData = {
@@ -726,36 +736,67 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       `);
       const hasCategoryColumns = columnCheck.rows[0]?.exists || false;
 
+      // Ensure quantity and unitPrice are proper numbers
+      const quantityNum = parseFloat(String(quantity)) || 0;
+      const unitPriceNum = parseFloat(String(unitPrice)) || 0;
+      const totalNum = quantityNum * unitPriceNum;
+      
+      // Log values for debugging
+      console.log('🔵 [INVOICE CREATE] Line data:', {
+        invoiceId: invoice.id,
+        itemId: itemId,
+        itemIdType: typeof itemId,
+        quantity: quantityNum,
+        quantityType: typeof quantityNum,
+        unitPrice: unitPriceNum,
+        unitPriceType: typeof unitPriceNum,
+        total: totalNum,
+        description: line.description,
+        code: line.code,
+        uom: line.uom,
+        categoryData: categoryData,
+        hasCategoryColumns: hasCategoryColumns
+      });
+      
       if (hasCategoryColumns) {
+        const insertParams = [
+          invoice.id, itemId, quantityNum, unitPriceNum,
+          totalNum, line.description, line.code, line.uom,
+          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
+          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
+        ];
+        console.log('🔵 [INVOICE CREATE] Insert params with categories:', insertParams.map((p, i) => `$${i+1}=${p} (${typeof p})`));
+        
         await client.query(`
           INSERT INTO invoice_lines (
             invoice_id, item_id, quantity, unit_price, total, description, code, uom,
             category_id, category_1_id, category_2_id, category_name, category_1_name, category_2_name
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        `, [
-          invoice.id, itemId, quantity, unitPrice,
-          quantity * unitPrice, line.description, line.code, line.uom,
-          categoryData.category_id, categoryData.category_1_id, categoryData.category_2_id,
-          categoryData.category_name, categoryData.category_1_name, categoryData.category_2_name
-        ]);
+        `, insertParams);
       } else {
+        const insertParams = [
+          invoice.id, itemId, quantityNum, unitPriceNum,
+          totalNum, line.description, line.code, line.uom
+        ];
+        console.log('🔵 [INVOICE CREATE] Insert params without categories:', insertParams.map((p, i) => `$${i+1}=${p} (${typeof p})`));
+        
         await client.query(`
           INSERT INTO invoice_lines (
             invoice_id, item_id, quantity, unit_price, total, description, code, uom
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `, [
-          invoice.id, itemId, quantity, unitPrice,
-          quantity * unitPrice, line.description, line.code, line.uom
-        ]);
+        `, insertParams);
       }
 
       // Update stock quantity (reduce stock for invoice) - only if item_id is provided
+      // Cast quantity to INTEGER since items.quantity is INTEGER and invoice_lines.quantity is DECIMAL
       if (itemId && !isNaN(itemId)) {
+        // Use the already parsed quantityNum and round to nearest integer for stock update
+        const quantityInt = Math.round(quantityNum); // Round to nearest integer for stock update
         await client.query(`
           UPDATE items 
           SET quantity = quantity - $1 
           WHERE id = $2 AND business_id = $3
-        `, [quantity, itemId, businessId]);
+        `, [quantityInt, itemId, businessId]);
       }
     }
 
