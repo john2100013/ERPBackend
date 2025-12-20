@@ -33,6 +33,7 @@ export const authenticateToken = async (
     } as User;
     req.businessId = decoded.businessId;
     req.userId = decoded.userId; // Also set userId for convenience
+    req.role = decoded.role; // Set role for convenience in route handlers
     
     next();
   } catch (error) {
