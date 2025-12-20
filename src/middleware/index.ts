@@ -14,88 +14,50 @@ export const limiter = rateLimit({
   skip: (req) => req.method === 'OPTIONS' // Skip rate limiting for CORS preflight requests
 });
 
-// CORS configuration
-export const corsOptions = {
+// CORS configuration - simplified for better reliability on Vercel
+export const corsOptions: cors.CorsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     try {
-      // In development, allow all localhost origins
-      const isDevelopment = process.env.NODE_ENV !== 'production';
-      
-      console.log(`🔍 CORS Debug - Incoming origin: ${origin}`);
-      console.log(`🔍 CORS Debug - FRONTEND_URL env: ${process.env.FRONTEND_URL}`);
-      console.log(`🔍 CORS Debug - NODE_ENV: ${process.env.NODE_ENV}`);
-      
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) {
-        console.log('✅ CORS: Allowing request with no origin');
         return callback(null, true);
       }
       
-      // In development, allow all localhost and 127.0.0.1 origins
-      if (isDevelopment && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-        console.log(`✅ CORS: Allowing localhost origin in development: ${origin}`);
-        return callback(null, true);
-      }
-      
-      // Define allowed origins (strings only, normalize for comparison)
-      const allowedOriginsList = [
+      // Define allowed origins
+      const allowedOrigins = [
         process.env.FRONTEND_URL,
         'http://localhost:5173',
         'http://127.0.0.1:5173',
-        'https://frontend-ruby-theta-36.vercel.app', // Current production frontend
-        'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app' // Old/backup frontend
-      ].filter(Boolean) as string[]; // Remove any undefined/null values
+        'https://frontend-ruby-theta-36.vercel.app',
+        'https://frontend-fjvj3z1ad-johns-projects-9fb711ff.vercel.app'
+      ].filter(Boolean) as string[];
       
-      // Normalize origin for comparison (remove trailing slashes)
-      const normalizedOrigin = origin?.replace(/\/$/, '');
+      // Check if origin is in allowed list or matches Vercel pattern
+      const isAllowed = allowedOrigins.includes(origin) || /^https:\/\/frontend-.*\.vercel\.app$/.test(origin);
       
-      console.log(`🔍 CORS Debug - Allowed origins:`, allowedOriginsList);
-      console.log(`🔍 CORS Debug - Normalized origin:`, normalizedOrigin);
-      
-      // Check if origin matches any allowed origin (normalized comparison)
-      const isAllowed = allowedOriginsList.some(allowed => {
-        const normalizedAllowed = allowed.replace(/\/$/, '');
-        return normalizedAllowed === normalizedOrigin || allowed === normalizedOrigin;
-      });
-      
-      // Also check if it matches Vercel preview URL pattern
-      const isVercelPreview = /^https:\/\/frontend-.*\.vercel\.app$/.test(origin || '');
-      
-      if (isAllowed || isVercelPreview) {
-        console.log(`✅ CORS: Origin ${origin} is allowed`);
+      if (isAllowed) {
         callback(null, true);
       } else {
-        // Be more permissive for Vercel URLs to avoid blocking legitimate requests
-        if (origin && origin.includes('.vercel.app')) {
-          console.warn(`⚠️ CORS: Allowing Vercel URL despite not being in exact list: ${origin}`);
+        // Allow any .vercel.app origin as fallback (fail open for production)
+        if (origin.includes('.vercel.app')) {
           callback(null, true);
         } else {
-          console.error(`❌ CORS blocked origin: ${origin}`);
-          callback(new Error('Not allowed by CORS'), false);
+          callback(null, false);
         }
       }
-    } catch (error: any) {
-      console.error('❌ CORS origin check error:', error);
-      // On error, allow the request to prevent blocking (fail open for production)
-      console.warn('⚠️ CORS: Allowing request due to error in origin check');
+    } catch (error) {
+      // On any error, allow the request (fail open)
+      console.error('CORS origin check error:', error);
       callback(null, true);
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Origin',
-    'X-Requested-With',
-    'Content-Type',
-    'Accept',
-    'Authorization',
-    'Cache-Control',
-    'Pragma'
-  ],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
   exposedHeaders: ['Authorization'],
   preflightContinue: false,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 };
 
 // Security headers
