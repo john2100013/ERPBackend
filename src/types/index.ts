@@ -5,7 +5,7 @@ export interface User {
   password?: string;
   first_name: string;
   last_name: string;
-  role: 'owner' | 'admin' | 'employee';
+  role: 'Admin' | 'User' | 'owner' | 'admin' | 'employee'; // Support both old and new role formats
   business_id: number;
   is_active: boolean;
   created_at: Date;

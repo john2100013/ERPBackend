@@ -223,8 +223,8 @@ router.post('/draft', authenticateToken, async (req: AuthenticatedRequest, res) 
   const client = await pool.connect();
   
   try {
-    const businessId = req.user?.business_id;
-    const userId = req.user?.id;
+    const businessId = req.businessId || req.user?.business_id;
+    const userId = req.userId || req.user?.id;
 
     if (!businessId || !userId) {
       return res.status(400).json({
@@ -533,8 +533,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
   const client = await pool.connect();
   
   try {
-    const businessId = req.user?.business_id;
-    const userId = req.user?.id;
+    const businessId = req.businessId || req.user?.business_id;
+    const userId = req.userId || req.user?.id;
 
     if (!businessId || !userId) {
       return res.status(400).json({
@@ -982,8 +982,8 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
   
   try {
     const invoiceId = parseInt(req.params.id);
-    const businessId = req.user?.business_id;
-    const userId = req.user?.id;
+    const businessId = req.businessId || req.user?.business_id;
+    const userId = req.userId || req.user?.id;
 
     if (!businessId || !userId) {
       return res.status(400).json({

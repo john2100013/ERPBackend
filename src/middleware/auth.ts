@@ -5,6 +5,8 @@ import { User } from '../types';
 export interface AuthenticatedRequest extends Request {
   user?: User;
   businessId?: number;
+  userId?: number;
+  role?: string;
 }
 
 export const authenticateToken = async (
@@ -30,6 +32,7 @@ export const authenticateToken = async (
       role: decoded.role
     } as User;
     req.businessId = decoded.businessId;
+    req.userId = decoded.userId; // Also set userId for convenience
     
     next();
   } catch (error) {
