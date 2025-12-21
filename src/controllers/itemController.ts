@@ -129,8 +129,9 @@ export class ItemController {
   static async updateItem(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const businessId = (req as any).businessId;
+      const userId = (req as any).userId || (req as any).user?.id;
       const itemId = parseInt(req.params.id);
-      const { item_name, quantity, rate, unit, description, category_id, category_1_id, category_2_id } = req.body;
+      const { item_name, quantity, rate, unit, description, category_id, category_1_id, category_2_id, modification_reason } = req.body;
 
       if (isNaN(itemId)) {
         res.status(400).json({
@@ -153,6 +154,16 @@ export class ItemController {
         res.status(400).json({
           success: false,
           message: 'Rate must be a non-negative number'
+        });
+        return;
+      }
+
+      // Get old item data before update for modification document
+      const oldItem = await ItemService.getItemById(businessId, itemId);
+      if (!oldItem) {
+        res.status(404).json({
+          success: false,
+          message: 'Item not found'
         });
         return;
       }
@@ -190,10 +201,32 @@ export class ItemController {
         return;
       }
 
+      // Create product modification document
+      let modificationId: number | null = null;
+      if (userId && businessId) {
+        try {
+          const modId = await ItemService.createProductModification({
+            businessId,
+            userId,
+            itemId,
+            oldItem,
+            newItem: item,
+            modificationReason: modification_reason || 'Product updated'
+          }) as unknown as number;
+          modificationId = modId;
+        } catch (modError) {
+          console.error('Error creating product modification document:', modError);
+          // Don't fail the update if modification document creation fails
+        }
+      }
+
       res.json({
         success: true,
         message: 'Item updated successfully',
-        data: { item }
+        data: { 
+          item,
+          modification_id: modificationId // Return modification ID for frontend navigation
+        }
       });
     } catch (error) {
       next(error);

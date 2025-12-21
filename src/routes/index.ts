@@ -18,6 +18,7 @@ import hospitalRoutes from './hospitalRoutes';
 import mpesaRoutes from './mpesaRoutes';
 import syncRoutes from './syncRoutes';
 import userRoutes from './userRoutes';
+import productModificationRoutes from './productModificationRoutes';
 import { getPool } from '../database/connection';
 
 const router = Router();
@@ -41,6 +42,7 @@ router.use('/hospital', hospitalRoutes);
 router.use('/mpesa', mpesaRoutes);
 router.use('/sync', syncRoutes);
 router.use('/users', userRoutes);
+router.use('/product-modifications', productModificationRoutes);
 router.use('/', businessSettingsRoutes);
 
 // Health check endpoint

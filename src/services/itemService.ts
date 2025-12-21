@@ -612,4 +612,68 @@ export class ItemService {
       manufacturing_date: row.manufacturing_date || null
     }));
   }
+
+  static async createProductModification(data: {
+    businessId: number;
+    userId: number;
+    itemId: number;
+    oldItem: any;
+    newItem: any;
+    modificationReason?: string;
+  }): Promise<number> {
+    const { businessId, userId, itemId, oldItem, newItem, modificationReason } = data;
+
+    // Generate modification number
+    const businessResult = await pool.query('SELECT name FROM businesses WHERE id = $1', [businessId]);
+    const businessName = businessResult.rows[0]?.name || 'BUS';
+    const businessPrefix = 'PM-' + businessName.substring(0, 3).toUpperCase() + '-';
+    
+    const modificationNumberResult = await pool.query(
+      'SELECT generate_product_modification_number($1) as modification_number',
+      [businessPrefix]
+    );
+    const modificationNumber = modificationNumberResult.rows[0].modification_number;
+
+    // Insert product modification record
+    const result = await pool.query(
+      `INSERT INTO product_modifications (
+        item_id, business_id, modification_number, modified_by,
+        old_item_name, old_description, old_quantity, old_unit_price, old_unit,
+        old_category_id, old_category_1_id, old_category_2_id,
+        new_item_name, new_description, new_quantity, new_unit_price, new_unit,
+        new_category_id, new_category_1_id, new_category_2_id,
+        modification_reason
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      RETURNING id`,
+      [
+        itemId,
+        businessId,
+        modificationNumber,
+        userId,
+        oldItem.item_name || oldItem.name || null,
+        oldItem.description || null,
+        oldItem.quantity || 0,
+        oldItem.rate || oldItem.unit_price || 0,
+        oldItem.unit || null,
+        oldItem.category_id || null,
+        oldItem.category_1_id || null,
+        oldItem.category_2_id || null,
+        newItem.item_name || newItem.name || null,
+        newItem.description || null,
+        newItem.quantity || 0,
+        newItem.rate || newItem.unit_price || 0,
+        newItem.unit || null,
+        newItem.category_id || null,
+        newItem.category_1_id || null,
+        newItem.category_2_id || null,
+        modificationReason || 'Product updated'
+      ]
+    );
+
+    if (!result.rows[0] || !result.rows[0].id) {
+      throw new Error('Failed to create product modification: no ID returned');
+    }
+
+    return parseInt(result.rows[0].id, 10);
+  }
 }

@@ -30,7 +30,7 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
               can_access_pos, can_access_advanced_package, can_access_salon, can_access_service_billing,
               can_access_hospital, can_access_invoices, can_access_quotations, can_access_items,
               can_access_customers, can_access_goods_returns, can_access_damage_tracking,
-              can_access_signatures, can_access_database_settings
+              can_access_signatures, can_access_database_settings, can_edit_delete_products
        FROM users
        WHERE business_id = $1
        ORDER BY created_at DESC`,
@@ -233,7 +233,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
         'can_access_pos', 'can_access_advanced_package', 'can_access_salon', 'can_access_service_billing',
         'can_access_hospital', 'can_access_invoices', 'can_access_quotations', 'can_access_items',
         'can_access_customers', 'can_access_goods_returns', 'can_access_damage_tracking',
-        'can_access_signatures', 'can_access_database_settings'
+        'can_access_signatures', 'can_access_database_settings', 'can_edit_delete_products'
       ];
 
       permissionFields.forEach(field => {
@@ -263,7 +263,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
               can_access_pos, can_access_advanced_package, can_access_salon, can_access_service_billing,
               can_access_hospital, can_access_invoices, can_access_quotations, can_access_items,
               can_access_customers, can_access_goods_returns, can_access_damage_tracking,
-              can_access_signatures, can_access_database_settings`,
+              can_access_signatures, can_access_database_settings, can_edit_delete_products`,
       values
     );
 

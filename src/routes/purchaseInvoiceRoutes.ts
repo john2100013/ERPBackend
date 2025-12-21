@@ -270,7 +270,8 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       amountPaid = 0,
       paymentMethod,
       discount_amount = 0,
-      vat_amount
+      vat_amount,
+      affectFinancialAccount = true // Default to true if not provided (backward compatibility)
     } = req.body;
 
     // Validate required fields
@@ -458,9 +459,9 @@ router.post('/', authenticateToken, async (req: AuthenticatedRequest, res) => {
       }
     }
 
-    // If payment is made and a financial account is selected, update the account balance
+    // If payment is made and a financial account is selected AND affectFinancialAccount is true, update the account balance
     // For purchase invoices: DECREASE balance by amount paid (money going out - expense)
-    if (parsedAmountPaid > 0 && financialAccountId !== null && !isNaN(financialAccountId)) {
+    if (parsedAmountPaid > 0 && financialAccountId !== null && !isNaN(financialAccountId) && affectFinancialAccount === true) {
       // Update financial account balance (decrease by amount paid)
       await client.query(`
         UPDATE financial_accounts 
@@ -543,7 +544,10 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
       due_date,
       payment_terms,
       discount_amount = 0,
-      vat_amount
+      vat_amount,
+      amountPaid = 0,
+      paymentMethod,
+      affectFinancialAccount = true // Default to true if not provided (backward compatibility)
     } = req.body;
 
     await client.query('BEGIN');
@@ -633,6 +637,58 @@ router.put('/:id', authenticateToken, async (req: AuthenticatedRequest, res) => 
           WHERE id = $2 AND business_id = $3
         `, [quantityInt, itemId, businessId]);
       }
+    }
+
+    // Handle payment updates if amountPaid and paymentMethod are provided
+    const parsedAmountPaid = parseFloat(String(amountPaid)) || 0;
+    let financialAccountId: number | null = null;
+    if (paymentMethod) {
+      const parsedPaymentMethod = typeof paymentMethod === 'string' 
+        ? (isNaN(Number(paymentMethod)) ? null : parseInt(String(paymentMethod)))
+        : (isNaN(Number(paymentMethod)) ? null : parseInt(String(paymentMethod)));
+      
+      if (parsedPaymentMethod !== null && !isNaN(parsedPaymentMethod) && parsedPaymentMethod > 0) {
+        financialAccountId = parsedPaymentMethod;
+      }
+    }
+
+    // Delete existing payment records for this purchase invoice
+    await client.query('DELETE FROM purchase_invoice_payments WHERE purchase_invoice_id = $1', [purchaseInvoiceId]);
+
+    // If payment is made and a financial account is selected AND affectFinancialAccount is true, update the account balance
+    // For purchase invoices: DECREASE balance by amount paid (money going out - expense)
+    if (parsedAmountPaid > 0 && financialAccountId !== null && !isNaN(financialAccountId) && affectFinancialAccount === true) {
+      // Update financial account balance (decrease by amount paid)
+      await client.query(`
+        UPDATE financial_accounts 
+        SET current_balance = current_balance - $1, updated_at = NOW()
+        WHERE id = $2 AND business_id = $3
+      `, [parsedAmountPaid, financialAccountId, businessId]);
+
+      // Determine payment method type
+      let validPaymentMethod = 'cash';
+      const paymentMethodStr = String(payment_terms || '').toLowerCase();
+      if (paymentMethodStr.includes('mpesa') || paymentMethodStr.includes('m-pesa') || paymentMethodStr === 'mobile_money') {
+        validPaymentMethod = 'mobile_money';
+      } else if (paymentMethodStr.includes('bank')) {
+        validPaymentMethod = 'bank';
+      } else if (paymentMethodStr.includes('cheque') || paymentMethodStr.includes('check')) {
+        validPaymentMethod = 'cheque';
+      } else if (paymentMethodStr.includes('card')) {
+        validPaymentMethod = 'card';
+      }
+
+      // Create a payment record for audit trail
+      const purchaseInvoiceNumber = existingPurchaseInvoice.rows[0].purchase_invoice_number;
+      await client.query(`
+        INSERT INTO purchase_invoice_payments (
+          purchase_invoice_id, financial_account_id, amount, payment_method, 
+          payment_reference, payment_date, business_id, created_by
+        ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
+      `, [
+        purchaseInvoiceId, financialAccountId, parsedAmountPaid, validPaymentMethod,
+        `PI-${purchaseInvoiceNumber}`, businessId, userId
+      ]);
     }
 
     await client.query('COMMIT');
